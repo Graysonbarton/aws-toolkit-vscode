@@ -183,7 +183,7 @@ async function validateConnection(
 }
 
 function createCommandDecorator(commands: CodeCatalystCommands): CommandDecorator {
-    return command =>
+    return (command) =>
         (...args) =>
             commands.withClient(command, ...args)
 }
@@ -335,7 +335,7 @@ export class CodeCatalystCommands {
         return devenv
     }
 
-    public static fromContext(ctx: Pick<vscode.ExtensionContext, 'secrets' | 'globalState'>) {
+    public static fromContext(ctx: Pick<vscode.ExtensionContext, 'secrets'>) {
         const auth = CodeCatalystAuthenticationProvider.fromContext(ctx)
 
         return new this(auth)

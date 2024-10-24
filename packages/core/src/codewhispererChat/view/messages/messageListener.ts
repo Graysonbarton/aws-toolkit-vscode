@@ -2,13 +2,13 @@
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-
 import { MessageListener } from '../../../amazonq/messages/messageListener'
 import { ExtensionMessage } from '../../../amazonq/webview/ui/commands'
 import { AuthController } from '../../../amazonq/auth/controller'
 import { ChatControllerMessagePublishers } from '../../controllers/chat/controller'
 import { ReferenceLogController } from './referenceLogController'
 import { getLogger } from '../../../shared/logger'
+import { openSettingsId } from '../../../shared/settings'
 
 export interface UIMessageListenerProps {
     readonly chatControllerMessagePublishers: ChatControllerMessagePublishers
@@ -27,7 +27,7 @@ export class UIMessageListener {
         this.referenceLogController = new ReferenceLogController()
         this.authController = new AuthController()
 
-        this.webViewMessageListener.onMessage(msg => {
+        this.webViewMessageListener.onMessage((msg) => {
             this.handleMessage(msg)
         })
     }
@@ -63,6 +63,12 @@ export class UIMessageListener {
                     })
                 }
                 break
+            case 'accept_diff':
+                this.processAcceptDiff(msg)
+                break
+            case 'view_diff':
+                this.processViewDiff(msg)
+                break
             case 'code_was_copied_to_clipboard':
                 this.processCodeWasCopiedToClipboard(msg)
                 break
@@ -79,7 +85,7 @@ export class UIMessageListener {
                 this.chatItemVoted(msg)
                 break
             case 'chat-item-feedback':
-                this.chatItemFeedback(msg).catch(e => {
+                this.chatItemFeedback(msg).catch((e) => {
                     getLogger().error('chatItemFeedback failed: %s', (e as Error).message)
                 })
                 break
@@ -95,7 +101,13 @@ export class UIMessageListener {
             case 'footer-info-link-click':
                 this.processFooterInfoLinkClick(msg)
                 break
+            case 'open-settings':
+                this.processOpenSettings(msg)
         }
+    }
+
+    private processOpenSettings(msg: any) {
+        void openSettingsId(`amazonQ.workspaceIndex`)
     }
 
     private processAuthFollowUpWasClicked(msg: any) {
@@ -146,12 +158,30 @@ export class UIMessageListener {
             command: msg.command,
             tabID: msg.tabID,
             messageId: msg.messageId,
+            userIntent: msg.userIntent,
             code: msg.code,
             insertionTargetType: msg.insertionTargetType,
             codeReference: msg.codeReference,
             eventId: msg.eventId,
             codeBlockIndex: msg.codeBlockIndex,
             totalCodeBlocks: msg.totalCodeBlocks,
+            codeBlockLanguage: msg.codeBlockLanguage,
+        })
+    }
+
+    private processAcceptDiff(msg: any) {
+        this.chatControllerMessagePublishers.processAcceptDiff.publish({
+            command: msg.command,
+            tabID: msg.tabID || msg.tabId,
+            ...msg,
+        })
+    }
+
+    private processViewDiff(msg: any) {
+        this.chatControllerMessagePublishers.processViewDiff.publish({
+            command: msg.command,
+            tabID: msg.tabID || msg.tabId,
+            ...msg,
         })
     }
 
@@ -160,12 +190,14 @@ export class UIMessageListener {
             command: msg.command,
             tabID: msg.tabID,
             messageId: msg.messageId,
+            userIntent: msg.userIntent,
             code: msg.code,
             insertionTargetType: msg.insertionTargetType,
             codeReference: msg.codeReference,
             eventId: msg.eventId,
             codeBlockIndex: msg.codeBlockIndex,
             totalCodeBlocks: msg.totalCodeBlocks,
+            codeBlockLanguage: msg.codeBlockLanguage,
         })
     }
 

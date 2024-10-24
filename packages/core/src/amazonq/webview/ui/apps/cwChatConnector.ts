@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ChatItem, ChatItemAction, ChatItemType, FeedbackPayload } from '@aws/mynah-ui'
+import { ChatItemAction, ChatItemType, FeedbackPayload } from '@aws/mynah-ui'
 import { ExtensionMessage } from '../commands'
 import { CodeReference } from './amazonqCommonsConnector'
 import { TabOpenType, TabsStorage } from '../storages/tabsStorage'
 import { FollowUpGenerator } from '../followUps/generator'
+import { CWCChatItem } from '../connector'
 
 interface ChatPayload {
     chatMessage: string
@@ -17,10 +18,11 @@ interface ChatPayload {
 export interface ConnectorProps {
     sendMessageToExtension: (message: ExtensionMessage) => void
     onMessageReceived?: (tabID: string, messageData: any, needToShowAPIDocsTab: boolean) => void
-    onChatAnswerReceived?: (tabID: string, message: ChatItem) => void
-    onCWCContextCommandMessage: (message: ChatItem, command?: string) => string | undefined
+    onChatAnswerReceived?: (tabID: string, message: CWCChatItem, messageData: any) => void
+    onCWCContextCommandMessage: (message: CWCChatItem, command?: string) => string | undefined
     onError: (tabID: string, message: string, title: string) => void
     onWarning: (tabID: string, message: string, title: string) => void
+    onOpenSettingsMessage: (tabID: string) => void
     tabsStorage: TabsStorage
 }
 
@@ -30,6 +32,7 @@ export class Connector {
     private readonly onWarning
     private readonly onChatAnswerReceived
     private readonly onCWCContextCommandMessage
+    private readonly onOpenSettingsMessage
     private readonly followUpGenerator: FollowUpGenerator
 
     constructor(props: ConnectorProps) {
@@ -38,6 +41,7 @@ export class Connector {
         this.onWarning = props.onWarning
         this.onError = props.onError
         this.onCWCContextCommandMessage = props.onCWCContextCommandMessage
+        this.onOpenSettingsMessage = props.onOpenSettingsMessage
         this.followUpGenerator = new FollowUpGenerator()
     }
 
@@ -69,6 +73,17 @@ export class Connector {
     }
 
     followUpClicked = (tabID: string, messageId: string, followUp: ChatItemAction): void => {
+        /**
+         * We've pressed on a followup button and should start watching that round trip telemetry
+         */
+        this.sendMessageToExtension({
+            command: 'start-chat-message-telemetry',
+            trigger: 'followUpClicked',
+            tabID,
+            traceId: messageId,
+            tabType: 'cwc',
+            startTime: Date.now(),
+        })
         this.sendMessageToExtension({
             command: 'follow-up-was-clicked',
             followUp,
@@ -95,7 +110,9 @@ export class Connector {
         codeReference?: CodeReference[],
         eventId?: string,
         codeBlockIndex?: number,
-        totalCodeBlocks?: number
+        totalCodeBlocks?: number,
+        userIntent?: string,
+        codeBlockLanguage?: string
     ): void => {
         this.sendMessageToExtension({
             tabID: tabID,
@@ -108,6 +125,8 @@ export class Connector {
             eventId,
             codeBlockIndex,
             totalCodeBlocks,
+            userIntent,
+            codeBlockLanguage,
         })
     }
 
@@ -119,7 +138,9 @@ export class Connector {
         codeReference?: CodeReference[],
         eventId?: string,
         codeBlockIndex?: number,
-        totalCodeBlocks?: number
+        totalCodeBlocks?: number,
+        userIntent?: string,
+        codeBlockLanguage?: string
     ): void => {
         this.sendMessageToExtension({
             tabID: tabID,
@@ -132,6 +153,8 @@ export class Connector {
             eventId,
             codeBlockIndex,
             totalCodeBlocks,
+            userIntent,
+            codeBlockLanguage,
         })
     }
 
@@ -178,8 +201,20 @@ export class Connector {
         })
     }
 
-    requestGenerativeAIAnswer = (tabID: string, payload: ChatPayload): Promise<any> =>
-        new Promise((resolve, reject) => {
+    requestGenerativeAIAnswer = (tabID: string, messageId: string, payload: ChatPayload): Promise<any> => {
+        /**
+         * When a user presses "enter" send an event that indicates
+         * we should start tracking the round trip time for this message
+         **/
+        this.sendMessageToExtension({
+            command: 'start-chat-message-telemetry',
+            trigger: 'onChatPrompt',
+            tabID,
+            traceId: messageId,
+            tabType: 'cwc',
+            startTime: Date.now(),
+        })
+        return new Promise((resolve, reject) => {
             this.sendMessageToExtension({
                 tabID: tabID,
                 command: 'chat-prompt',
@@ -188,6 +223,7 @@ export class Connector {
                 tabType: 'cwc',
             })
         })
+    }
 
     clearChat = (tabID: string): void => {
         this.sendMessageToExtension({
@@ -255,13 +291,15 @@ export class Connector {
                       }
                     : undefined
 
-            const answer: ChatItem = {
+            const answer: CWCChatItem = {
                 type: messageData.messageType,
                 messageId: messageData.messageID ?? messageData.triggerID,
                 body: messageData.message,
                 followUp: followUps,
                 canBeVoted: true,
                 codeReference: messageData.codeReference,
+                userIntent: messageData.userIntent,
+                codeBlockLanguage: messageData.codeBlockLanguage,
             }
 
             // If it is not there we will not set it
@@ -275,7 +313,7 @@ export class Connector {
                     content: messageData.relatedSuggestions,
                 }
             }
-            this.onChatAnswerReceived(messageData.tabID, answer)
+            this.onChatAnswerReceived(messageData.tabID, answer, messageData)
 
             // Exit the function if we received an answer from AI
             if (
@@ -288,12 +326,14 @@ export class Connector {
             return
         }
         if (messageData.messageType === ChatItemType.ANSWER) {
-            const answer: ChatItem = {
+            const answer: CWCChatItem = {
                 type: messageData.messageType,
                 body: undefined,
                 relatedContent: undefined,
                 messageId: messageData.messageID,
                 codeReference: messageData.codeReference,
+                userIntent: messageData.userIntent,
+                codeBlockLanguage: messageData.codeBlockLanguage,
                 followUp:
                     messageData.followUps !== undefined && messageData.followUps.length > 0
                         ? {
@@ -302,7 +342,7 @@ export class Connector {
                           }
                         : undefined,
             }
-            this.onChatAnswerReceived(messageData.tabID, answer)
+            this.onChatAnswerReceived(messageData.tabID, answer, messageData)
 
             return
         }
@@ -313,15 +353,23 @@ export class Connector {
             return
         }
 
-        this.onChatAnswerReceived(messageData.tabID, {
-            type: ChatItemType.ANSWER,
-            messageId: messageData.triggerID,
-            body: messageData.message,
-            followUp: this.followUpGenerator.generateAuthFollowUps('cwc', messageData.authType),
-            canBeVoted: false,
-        })
+        this.onChatAnswerReceived(
+            messageData.tabID,
+            {
+                type: ChatItemType.ANSWER,
+                messageId: messageData.triggerID,
+                body: messageData.message,
+                followUp: this.followUpGenerator.generateAuthFollowUps('cwc', messageData.authType),
+                canBeVoted: false,
+            },
+            messageData
+        )
 
         return
+    }
+
+    private processOpenSettingsMessage = async (messageData: any): Promise<void> => {
+        this.onOpenSettingsMessage(messageData.tabID)
     }
 
     handleMessageReceive = async (messageData: any): Promise<void> => {
@@ -346,6 +394,11 @@ export class Connector {
 
         if (messageData.type === 'authNeededException') {
             await this.processAuthNeededException(messageData)
+            return
+        }
+
+        if (messageData.type === 'openSettingsMessage') {
+            await this.processOpenSettingsMessage(messageData)
             return
         }
     }

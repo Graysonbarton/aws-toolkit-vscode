@@ -9,11 +9,22 @@ import { ServiceException } from '@aws-sdk/smithy-client'
 import { isThrottlingError, isTransientError } from '@smithy/service-error-classification'
 import { Result } from './telemetry/telemetry'
 import { CancellationError } from './utilities/timeoutUtils'
-import { isNonNullable } from './utilities/tsUtils'
-import type * as fs from 'fs'
+import { hasKey, isNonNullable } from './utilities/tsUtils'
+import type * as nodefs from 'fs' // eslint-disable-line no-restricted-imports
 import type * as os from 'os'
 import { CodeWhispererStreamingServiceException } from '@amzn/codewhisperer-streaming'
-import { isAutomation } from './vscode/env'
+import { driveLetterRegex } from './utilities/pathUtils'
+import { getLogger } from './logger/logger'
+import { crashMonitoringDirName } from './constants'
+
+let _username = 'unknown-user'
+let _isAutomation = false
+
+/** Performs one-time initialization, to avoid circular dependencies. */
+export function init(username: string, isAutomation: boolean) {
+    _username = username
+    _isAutomation = isAutomation
+}
 
 export const errorCode = {
     invalidConnection: 'InvalidConnection',
@@ -130,20 +141,28 @@ export class ToolkitError extends Error implements ErrorInformation {
      * sensitive information and should be limited in technical detail.
      */
     public override readonly message: string
-    public readonly code = this.info.code
-    public readonly details = this.info.details
+    public readonly code: string | undefined
+    public readonly details: Record<string, unknown> | undefined
 
     /**
      * We guard against mutation to stop a developer from creating a circular chain of errors.
      * The alternative is to truncate errors to an arbitrary depth though that doesn't address
      * why the error chain is deep.
      */
-    readonly #cause = this.info.cause
-    readonly #name = this.info.name ?? super.name
+    readonly #cause: Error | undefined
+    readonly #name: string
+    readonly #documentationUri: any
+    readonly #cancelled: boolean | undefined
 
-    public constructor(message: string, protected readonly info: ErrorInformation = {}) {
+    public constructor(message: string, info: ErrorInformation = {}) {
         super(message)
         this.message = message
+        this.code = info.code
+        this.details = info.details
+        this.#cause = info.cause
+        this.#name = info.name ?? super.name
+        this.#cancelled = info.cancelled
+        this.#documentationUri = info.documentationUri
     }
 
     /**
@@ -167,14 +186,14 @@ export class ToolkitError extends Error implements ErrorInformation {
      * assignment on construction or by finding a 'cancelled' error within its causal chain.
      */
     public get cancelled(): boolean {
-        return this.info.cancelled ?? isUserCancelledError(this.cause)
+        return this.#cancelled ?? isUserCancelledError(this.cause)
     }
 
     /**
      * The associated documentation, if it exists. Otherwise undefined.
      */
     public get documentationUri(): vscode.Uri | undefined {
-        return this.info.documentationUri
+        return this.#documentationUri
     }
 
     /**
@@ -199,7 +218,24 @@ export class ToolkitError extends Error implements ErrorInformation {
     }
 
     /**
-     * Creates a new {@link ToolkitError} instance that was directly caused by another {@link error}.
+     * Creates a new {@link ToolkitError} instance that was directly caused by another error.
+     *
+     * @param error - The original error that caused this error.
+     * @param message - A descriptive message for the new error.
+     * @param info - Additional information about the error.
+     * @returns {ToolkitError} The new ToolkitError instance.
+     *
+     * @recommendation It is recommended to throw the returned ToolkitError instance instead of just returning it.
+     * This way, the error can be properly propagated and handled in the calling code.
+     *
+     * Example:
+     * ```typescript
+     * try {
+     *   // Some code that might throw an error
+     * } catch (error) {
+     *   throw ToolkitError.chain(error, 'An error occurred during operation', { operation: 'someOperation' });
+     * }
+     * ```
      */
     public static chain(error: unknown, message: string, info?: Omit<ErrorInformation, 'cause'>): ToolkitError {
         return new this(message, {
@@ -223,7 +259,7 @@ export class ToolkitError extends Error implements ErrorInformation {
             // TypeScript does not allow the use of `this` types for generic prototype methods unfortunately
             // This implementation is equivalent to re-assignment i.e. an unbound method on the prototype
             public static override chain<
-                T extends new (...args: ConstructorParameters<NamedErrorConstructor>) => ToolkitError
+                T extends new (...args: ConstructorParameters<NamedErrorConstructor>) => ToolkitError,
             >(this: T, ...args: Parameters<NamedErrorConstructor['chain']>): InstanceType<T> {
                 return ToolkitError.chain.call(this, ...args) as InstanceType<T>
             }
@@ -231,7 +267,14 @@ export class ToolkitError extends Error implements ErrorInformation {
     }
 }
 
-export function getErrorMsg(err: Error | undefined): string | undefined {
+/**
+ * Derives an error message from the given error object.
+ * Depending on the Error, the property used to derive the message can vary.
+ *
+ * @param withCause Append the message(s) from the cause chain, recursively.
+ *                  The message(s) are delimited by ' | '. Eg: msg1 | causeMsg1 | causeMsg2
+ */
+export function getErrorMsg(err: Error | undefined, withCause: boolean = false): string | undefined {
     if (err === undefined) {
         return undefined
     }
@@ -261,10 +304,23 @@ export function getErrorMsg(err: Error | undefined): string | undefined {
     //      }
     const anyDesc = (err as any).error_description
     const errDesc = typeof anyDesc === 'string' ? anyDesc.trim() : ''
-    const msg = errDesc !== '' ? errDesc : err.message?.trim()
+    let msg = errDesc !== '' ? errDesc : err.message?.trim()
 
     if (typeof msg !== 'string') {
         return undefined
+    }
+
+    // append the cause's message
+    if (withCause) {
+        const errorId = getErrorId(err)
+        // - prepend id to message
+        // - If a generic error does not have the `name` field explicitly set, it returns a generic 'Error' name. So skip since it is useless.
+        if (errorId && errorId !== 'Error') {
+            msg = `${errorId}: ${msg}`
+        }
+
+        const cause = (err as any).cause
+        return `${msg}${cause ? ' | ' + getErrorMsg(cause, withCause) : ''}`
     }
 
     return msg
@@ -312,12 +368,95 @@ export function getTelemetryResult(error: unknown | undefined): Result {
     return 'Failed'
 }
 
-/** Gets the (partial) error message detail for the `reasonDesc` field. */
-export function getTelemetryReasonDesc(err: unknown | undefined): string | undefined {
-    const msg = getErrorMsg(err as Error)
+/**
+ * Removes potential PII from a string, for logging/telemetry.
+ *
+ * Examples:
+ * - "Failed to save c:/fooß/bar/baz.txt" => "Failed to save c:/xß/x/x.txt"
+ * - "EPERM for dir c:/Users/user1/.aws/sso/cache/abc123.json" => "EPERM for dir c:/Users/x/.aws/sso/cache/x.json"
+ */
+export function scrubNames(s: string, username?: string) {
+    let r = ''
+    const fileExtRe = /\.[^.\/]+$/
+    const slashdot = /^[~.]*[\/\\]*/
 
-    // Truncate to 200 chars.
-    return msg && msg.length > 0 ? msg.substring(0, 200) : undefined
+    /** Allowlisted filepath segments. */
+    const keep = new Set<string>([
+        '~',
+        '.',
+        '..',
+        '.aws',
+        'aws',
+        'sso',
+        'cache',
+        'credentials',
+        'config',
+        'Users',
+        'users',
+        'home',
+        'tmp',
+        'aws-toolkit-vscode',
+        'globalStorage', // from vscode globalStorageUri
+        crashMonitoringDirName,
+    ])
+
+    if (username && username.length > 2) {
+        s = s.replaceAll(username, 'x')
+    }
+
+    // Replace contiguous whitespace with 1 space.
+    s = s.replace(/\s+/g, ' ')
+
+    // 1. split on whitespace.
+    // 2. scrub words that match username or look like filepaths.
+    const words = s.split(/\s+/)
+    for (const word of words) {
+        const pathSegments = word.split(/[\/\\]/)
+        if (pathSegments.length < 2) {
+            // Not a filepath.
+            r += ' ' + word
+            continue
+        }
+
+        // Replace all (non-allowlisted) ASCII filepath segments with "x".
+        // "/foo/bar/aws/sso/" => "/x/x/aws/sso/"
+        let scrubbed = ''
+        // Get the frontmatter ("/", "../", "~/", or "./").
+        const start = word.trimStart().match(slashdot)?.[0] ?? ''
+        pathSegments[0] = pathSegments[0].trimStart().replace(slashdot, '')
+        for (const seg of pathSegments) {
+            if (driveLetterRegex.test(seg)) {
+                scrubbed += seg
+            } else if (keep.has(seg)) {
+                scrubbed += '/' + seg
+            } else {
+                // Save the first non-ASCII (unicode) char, if any.
+                const nonAscii = seg.match(/[^\p{ASCII}]/u)?.[0] ?? ''
+                // Replace all chars (except [^…]) with "x" .
+                const ascii = seg.replace(/[^$[\](){}:;'" ]+/g, 'x')
+                scrubbed += `/${ascii}${nonAscii}`
+            }
+        }
+
+        // includes leading '.', eg: '.json'
+        const fileExt = pathSegments[pathSegments.length - 1].match(fileExtRe) ?? ''
+        r += ` ${start.replace(/\\/g, '/')}${scrubbed.replace(/^[\/\\]+/, '')}${fileExt}`
+    }
+
+    return r.trim()
+}
+
+/**
+ * Gets the (partial) error message detail for the `reasonDesc` field.
+ *
+ * @param err Error object, or message text
+ */
+export function getTelemetryReasonDesc(err: unknown | undefined): string | undefined {
+    const m = typeof err === 'string' ? err : (getErrorMsg(err as Error, true) ?? '')
+    const msg = scrubNames(m, _username)
+
+    // Truncate message as these strings can be very long.
+    return msg && msg.length > 0 ? msg.substring(0, 350) : undefined
 }
 
 export function getTelemetryReason(error: unknown | undefined): string | undefined {
@@ -398,10 +537,10 @@ export function findBestErrorInChain(error: Error, preferredErrors = _preferredE
         // const preferBest = ...
         const errCode = err.code?.trim() ?? ''
         const prefer =
-            (errCode !== '' && preferredErrors.some(re => re.test(errCode))) ||
+            (errCode !== '' && preferredErrors.some((re) => re.test(errCode))) ||
             // In priority order:
             isFilesystemError(err) ||
-            isNoPermissionsError(err)
+            isPermissionsError(err)
 
         if (isAwsError(err) || (prefer && !isAwsError(bestErr))) {
             if (isAwsError(err) && !isAwsError(bestErr)) {
@@ -440,11 +579,15 @@ function hasFault<T>(error: T): error is T & { $fault: 'client' | 'server' } {
 }
 
 function hasMetadata<T>(error: T): error is T & Pick<CodeWhispererStreamingServiceException, '$metadata'> {
-    return typeof (error as { $metadata?: unknown }).$metadata === 'object'
+    return typeof (error as { $metadata?: unknown })?.$metadata === 'object'
+}
+
+function hasResponse<T>(error: T): error is T & Pick<ServiceException, '$response'> {
+    return typeof (error as { $response?: unknown })?.$response === 'object'
 }
 
 function hasName<T>(error: T): error is T & { name: string } {
-    return typeof (error as { name?: unknown }).name === 'string'
+    return typeof (error as { name?: unknown })?.name === 'string'
 }
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -458,6 +601,16 @@ export function isAwsError(error: unknown): error is AWSError & { error_descript
 
 function hasCode<T>(error: T): error is T & { code: string } {
     return typeof (error as { code?: unknown }).code === 'string'
+}
+
+/**
+ * Returns the identifier the given error.
+ * Depending on the implementation, the identifier may exist on a
+ * different property.
+ */
+export function getErrorId(error: Error): string {
+    // prioritize code over the name
+    return hasCode(error) ? error.code : error.name
 }
 
 function hasTime(error: Error): error is typeof error & { time: Date } {
@@ -485,6 +638,17 @@ export function getRequestId(err: unknown): string | undefined {
     if (isAwsError(err)) {
         return err.requestId
     }
+}
+
+export function getHttpStatusCode(err: unknown): number | undefined {
+    if (hasResponse(err) && err?.$response?.statusCode !== undefined) {
+        return err?.$response?.statusCode
+    }
+    if (hasMetadata(err) && err.$metadata?.httpStatusCode !== undefined) {
+        return err.$metadata?.httpStatusCode
+    }
+
+    return undefined
 }
 
 export function isFilesystemError(err: unknown): boolean {
@@ -526,13 +690,13 @@ export function isFileNotFoundError(err: unknown): boolean {
     if (err instanceof vscode.FileSystemError) {
         return err.code === vscode.FileSystemError.FileNotFound().code
     } else if (hasCode(err)) {
-        return err.code === 'ENOENT'
+        return err.code === 'ENOENT' || err.code === 'FileNotFound'
     }
 
     return false
 }
 
-export function isNoPermissionsError(err: unknown): boolean {
+export function isPermissionsError(err: unknown): boolean {
     if (err instanceof vscode.FileSystemError) {
         return (
             err.code === vscode.FileSystemError.NoPermissions().code ||
@@ -563,12 +727,12 @@ function vscodeModeToString(mode: vscode.FileStat['permissions']) {
     }
 
     // XXX: future-proof in case vscode.FileStat.permissions gains more granularity.
-    if (isAutomation()) {
+    if (_isAutomation) {
         throw new Error('vscode.FileStat.permissions gained new fields, update this logic')
     }
 }
 
-function getEffectivePerms(uid: number, gid: number, stats: fs.Stats) {
+function getEffectivePerms(uid: number, gid: number, stats: nodefs.Stats) {
     const mode = stats.mode
     const isOwner = uid === stats.uid
     const isGroup = gid === stats.gid && !isOwner
@@ -599,7 +763,7 @@ export type PermissionsTriplet = `${'r' | '-' | '*'}${'w' | '-' | '*'}${'x' | '-
 export class PermissionsError extends ToolkitError {
     public readonly actual: string // This is a resolved triplet, _not_ the full bits
 
-    static fromNodeFileStats(stats: fs.Stats, userInfo: os.UserInfo<string>, expected: string, source: unknown) {
+    static fromNodeFileStats(stats: nodefs.Stats, userInfo: os.UserInfo<string>) {
         const mode = `${stats.isDirectory() ? 'd' : '-'}${modeToString(stats.mode)}`
         const owner = stats.uid === userInfo.uid ? (stats.uid === -1 ? '' : userInfo.username) : String(stats.uid)
         const group = String(stats.gid)
@@ -610,12 +774,7 @@ export class PermissionsError extends ToolkitError {
         return { mode, owner, group, actual, isAmbiguous, isOwner }
     }
 
-    static fromVscodeFileStats(
-        stats: vscode.FileStat,
-        userInfo: os.UserInfo<string>,
-        expected: string,
-        source: unknown
-    ) {
+    static fromVscodeFileStats(stats: vscode.FileStat, userInfo: os.UserInfo<string>) {
         const isDir = !!(stats.type & vscode.FileType.Directory)
         const mode = `${isDir ? 'd' : '-'}${vscodeModeToString(stats.permissions)}`
         const owner = '' // vscode.FileStat does not currently provide file owner.
@@ -630,18 +789,18 @@ export class PermissionsError extends ToolkitError {
     /**
      * Creates a PermissionsError from a file stat() result.
      *
-     * Note: pass `fs.Stats` when possible (in a nodejs context), because it gives much better info.
+     * Note: pass `nodefs.Stats` when possible (in a nodejs context), because it gives much better info.
      */
     public constructor(
         public readonly uri: vscode.Uri,
-        public readonly stats: fs.Stats | vscode.FileStat,
+        public readonly stats: nodefs.Stats | vscode.FileStat,
         public readonly userInfo: os.UserInfo<string>,
         public readonly expected: PermissionsTriplet,
         source?: unknown
     ) {
         const o = (stats as any).type
-            ? PermissionsError.fromVscodeFileStats(stats as vscode.FileStat, userInfo, expected, source)
-            : PermissionsError.fromNodeFileStats(stats as fs.Stats, userInfo, expected, source)
+            ? PermissionsError.fromVscodeFileStats(stats as vscode.FileStat, userInfo)
+            : PermissionsError.fromNodeFileStats(stats as nodefs.Stats, userInfo)
 
         const resolvedExpected = Array.from(expected)
             .map((c, i) => (c === '*' ? o.actual[i] : c))
@@ -668,7 +827,21 @@ export class PermissionsError extends ToolkitError {
 }
 
 export function isNetworkError(err?: unknown): err is Error & { code: string } {
-    if (isVSCodeProxyError(err)) {
+    if (!(err instanceof Error)) {
+        return false
+    }
+
+    if (
+        isVSCodeProxyError(err) ||
+        isSocketTimeoutError(err) ||
+        isEnoentError(err) ||
+        isEaccesError(err) ||
+        isEbadfError(err) ||
+        isEconnRefusedError(err) ||
+        err instanceof AwsClientResponseError ||
+        isBadResponseCode(err) ||
+        isEbusyError(err)
+    ) {
         return true
     }
 
@@ -688,7 +861,20 @@ export function isNetworkError(err?: unknown): err is Error & { code: string } {
         'EHOSTUNREACH',
         'EADDRINUSE',
         'ENOBUFS', // client side memory issue during http request?
-        'EADDRNOTAVAIL', // port not available/allowed?
+        'EADDRNOTAVAIL', // port not available/allowed?,
+        'SELF_SIGNED_CERT_IN_CHAIN',
+        'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+        'HPE_INVALID_VERSION',
+        'DEPTH_ZERO_SELF_SIGNED_CERT',
+        'ENOTCONN',
+        'ENETDOWN',
+        'ECONNABORTED',
+        'CERT_HAS_EXPIRED',
+        'EAI_FAIL',
+        '502', // This may be irrelevant as isBadResponseCode() may be all we need
+        'InternalServerException',
+        'ERR_SSL_WRONG_VERSION_NUMBER',
     ].includes(err.code)
 }
 
@@ -698,10 +884,183 @@ export function isNetworkError(err?: unknown): err is Error & { code: string } {
  *
  * Setting ID: http.proxy
  */
-function isVSCodeProxyError(err?: unknown): boolean {
-    if (!(err instanceof Error)) {
-        return false
+function isVSCodeProxyError(err: Error): boolean {
+    return isError(err, 'Error', 'Failed to establish a socket connection to proxies')
+}
+
+/**
+ * When making SSO OIDC calls, we were seeing errors in telemetry and narrowing it down brings us to:
+ * https://github.com/smithy-lang/smithy-typescript/blob/6aac850af4b5b07b3941854d21e3b0158aefcacb/packages/node-http-handler/src/set-socket-timeout.ts#L7
+ * This looks to be thrown during http requests, so we'll consider it a network error.
+ *
+ * The scenario where we are actually getting the error though might actually be a bug:
+ * https://github.com/aws/aws-sdk-js-v3/issues/6271
+ */
+function isSocketTimeoutError(err: Error): boolean {
+    return isError(err, 'TimeoutError', 'Connection timed out after')
+}
+
+/**
+ * We were seeing errors of ENOENT for the oidc FQDN (eg: oidc.us-east-1.amazonaws.com) during the SSO flow.
+ * Our assumption is that this is an intermittent error.
+ */
+function isEnoentError(err: Error): boolean {
+    return isError(err, 'ENOENT', 'getaddrinfo ENOENT')
+}
+
+function isEaccesError(err: Error): boolean {
+    return isError(err, 'EACCES', 'connect EACCES')
+}
+
+function isEbadfError(err: Error): boolean {
+    return isError(err, 'EBADF', 'connect EBADF')
+}
+
+function isEconnRefusedError(err: Error): boolean {
+    return isError(err, 'Error', 'connect ECONNREFUSED')
+}
+
+function isEbusyError(err: Error) {
+    // we were seeing errors with the message 'getaddrinfo EBUSY oidc.us-east-1.amazonaws.com'
+    return isError(err, 'EBUSY', 'getaddrinfo EBUSY')
+}
+
+/** Helper function to assert given error has the expected properties */
+export function isError(err: Error, id: string, messageIncludes: string = '') {
+    // It is not always clear if the error has the expected value in the `name` or `code` field
+    // so this checks both.
+    return (err.name === id || (err as any).code === id) && err.message.includes(messageIncludes)
+}
+
+/**
+ * These are the errors explicitly seen in telemetry. We can instead do any non-200 response code
+ * later, but this will give us better visibility in to the actual error codes we are currently getting.
+ */
+const errorResponseCodes = [302, 403, 404, 502, 503]
+
+/**
+ * Returns true if the given error is a bad response code
+ */
+function isBadResponseCode(error: Error) {
+    if (isNaN(Number(error.name))) {
+        return
+    }
+    const statusCode = parseInt(error.name, 10)
+    return errorResponseCodes.includes(statusCode)
+}
+
+/**
+ * AWS SDK clients make requests with the expected result to be JSON data.
+ * But in some cases the request may fail and result in an error HTML page being returned instead
+ * of the JSON. This will cause the client to throw a `SyntaxError` as a result
+ * of attempt to deserialize the non-JSON data.
+ *
+ * But within the `SyntaxError` instance is the real reason for the failure.
+ * This class attempts to extract the underlying issue from the SyntaxError.
+ *
+ * Example SyntaxError message before extracting the underlying issue:
+ *  - "Unexpected token '<', "<html><bod"... is not valid JSON Deserialization error: to see the raw response, inspect the hidden field {error}.$response on this object."
+ * Once we extract the real error message from the hidden field, `$response.reason`, we get messages similar to:
+ *  - "SDK Client unexpected error response: data response code: 403, data reason: Forbidden | Unexpected ..."
+ */
+export class AwsClientResponseError extends Error {
+    /** Use {@link instanceIf} to create instance. */
+    protected constructor(err: unknown) {
+        const underlyingErrorMsg = AwsClientResponseError.tryExtractReasonFromSyntaxError(err)
+
+        /**
+         * This condition should never be hit since {@link AwsClientResponseError.instanceIf}
+         * is the only way to create an instance of this class, due to the constructor not being public.
+         *
+         * The following only exists to make the type checker happy.
+         */
+        if (!(underlyingErrorMsg && err instanceof Error)) {
+            throw Error(`Cannot create AwsClientResponseError from ${JSON.stringify(err)}}`)
+        }
+
+        super(underlyingErrorMsg)
     }
 
-    return err.name === 'Error' && err.message.startsWith('Failed to establish a socket connection to proxies')
+    /**
+     * Resolves an instance of {@link AwsClientResponseError} if the given error matches certain criteria.
+     * Otherwise the original error is returned.
+     */
+    static instanceIf<T>(err: T): AwsClientResponseError | T {
+        const reason = AwsClientResponseError.tryExtractReasonFromSyntaxError(err)
+        if (reason) {
+            getLogger().debug(`Creating AwsClientResponseError from SyntaxError: %O`, err)
+            return new AwsClientResponseError(err)
+        }
+        return err
+    }
+
+    /**
+     * Returns the true underlying error message from a `SyntaxError`, if possible.
+     * Otherwise returning undefined.
+     */
+    static tryExtractReasonFromSyntaxError(err: unknown): string | undefined {
+        if (
+            !(
+                err instanceof SyntaxError &&
+                err.message.includes('inspect the hidden field {error}.$response on this object')
+            )
+        ) {
+            return undefined
+        }
+
+        // See the class docstring to explain how we know the existence of the following keys
+        if (hasKey(err, '$response') && err['$response'] !== undefined) {
+            const response = err['$response']
+            if (response) {
+                if (hasKey(response, 'reason') && response['reason'] !== undefined) {
+                    return response['reason'] as string
+                } else {
+                    // We were seeing some cases in telemetry where a syntax error made it all the way to this point
+                    // but then may have not had a 'reason'.
+                    return `No 'reason' field in '$response' | ${JSON.stringify(response)} | ${err.message}`
+                }
+            }
+        } else {
+            // We were seeing some cases in telemetry where a syntax error made it all the way to this point
+            // but then may have not had a '$response'.
+            return `No '$response' field in SyntaxError | ${err.message}`
+        }
+
+        return undefined
+    }
+}
+
+/**
+ * Run a function and swallow any errors that are not specified by `shouldThrow`
+ */
+export function tryRun<T>(fn: () => T, shouldThrow: (err: Error) => boolean, logMsg?: string): T | undefined
+export function tryRun<T>(
+    fn: () => Promise<T>,
+    shouldThrow: (err: Error) => boolean,
+    logMsg?: string
+): Promise<T> | undefined
+export function tryRun<T>(
+    fn: () => T | Promise<T>,
+    shouldThrow: (err: Error) => boolean,
+    logMsg?: string
+): T | Promise<T | void> | undefined {
+    // The function signature pattern will accept both async and non-async types.
+
+    const catchErr = (err: Error) => {
+        if (shouldThrow(err)) {
+            throw err
+        }
+
+        getLogger().error(logMsg ?? 'unknown caller: Error ignored: %s', err)
+    }
+
+    try {
+        const result = fn()
+        if (result instanceof Promise) {
+            return result.catch(catchErr)
+        }
+        return result
+    } catch (error: any) {
+        catchErr(error)
+    }
 }

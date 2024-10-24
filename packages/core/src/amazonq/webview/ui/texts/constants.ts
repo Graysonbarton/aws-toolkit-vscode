@@ -19,13 +19,13 @@ export const uiComponentsTexts = {
     save: 'Save',
     cancel: 'Cancel',
     submit: 'Submit',
-    stopGenerating: 'Stop generating',
+    stopGenerating: 'Stop',
     copyToClipboard: 'Copied to clipboard',
     noMoreTabsTooltip: 'You can only open ten conversation tabs at a time.',
     codeSuggestionWithReferenceTitle: 'Some suggestions contain code with references.',
     spinnerText: 'Generating your answer...',
 }
 
-export const userGuideURL = 'https://docs.aws.amazon.com/amazonq/latest/aws-builder-use-ug/getting-started.html'
+export const userGuideURL = 'https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/software-dev.html'
 export const manageAccessGuideURL =
     'https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/security_iam_manage-access-with-policies.html'

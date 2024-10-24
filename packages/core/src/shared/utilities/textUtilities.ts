@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as vscode from 'vscode'
 import * as crypto from 'crypto'
-import * as fs from 'fs'
+import * as fs from 'fs' // eslint-disable-line no-restricted-imports
 import { default as stripAnsi } from 'strip-ansi'
 import { isCloud9 } from '../extensionUtilities'
 import { getLogger } from '../logger'
@@ -30,11 +31,20 @@ export function truncate(s: string, n: number, suffix?: string): string {
 }
 
 /**
- * Indents a string.
+ * Indents a given string with spaces.
  *
- * @param size Indent width (number of space chars).
- * @param clear Clear existing whitespace, if any.
- * @param s Text to indent.
+ * @param {string} s - The input string to be indented.
+ * @param {number} [size=4] - The number of spaces to use for indentation. Defaults to 4.
+ * @param {boolean} [clear=false] - If true, the function will clear any existing indentation and apply the new indentation.
+ * @returns {string} The indented string.
+ *
+ * @example
+ * const indentedString = indent('Hello\nWorld', 2);
+ * console.log(indentedString); // Output: "  Hello\n  World"
+ *
+ * @example
+ * const indentedString = indent('  Hello\n    World', 4, true);
+ * console.log(indentedString); // Output: "    Hello\n    World"
  */
 export function indent(s: string, size: number = 4, clear: boolean = false): string {
     const n = Math.abs(size)
@@ -127,7 +137,7 @@ export function stripNewLinesAndComments(text: string): string {
     const blockCommentRegExp = /\/\*.*\*\//
     let result: string = ''
 
-    text.split(/\r|\n/).map(s => {
+    text.split(/\r|\n/).map((s) => {
         const commentStart: number = s.search(/\/\//)
         s = s.replace(blockCommentRegExp, '')
         result += commentStart === -1 ? s : s.substring(0, commentStart)
@@ -154,7 +164,7 @@ export async function insertTextIntoFile(text: string, filePath: string, line: n
 
     fs.writeSync(fd, newData, 0, newData.length, 0)
 
-    fs.close(fd, err => {
+    fs.close(fd, (err) => {
         if (err) {
             throw err
         }
@@ -386,4 +396,27 @@ export function getRandomString(length = 32) {
  */
 export function toBase64URL(base64: string) {
     return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+export function undefinedIfEmpty(str: string | undefined): string | undefined {
+    if (str && str.trim().length > 0) {
+        return str
+    }
+
+    return undefined
+}
+
+export function decodeBase64(base64Str: string): string {
+    return Buffer.from(base64Str, 'base64').toString()
+}
+/**
+ * Extracts the file path and selection context from the message.
+ *
+ * @param {any} message - The message object containing the file and selection context.
+ * @returns {Object} - An object with `filePath` and `selection` properties.
+ */
+export function extractFileAndCodeSelectionFromMessage(message: any) {
+    const filePath = message?.context?.activeFileContext?.filePath
+    const selection = message?.context?.focusAreaContext?.selectionInsideExtendedCodeBlock as vscode.Selection
+    return { filePath, selection }
 }

@@ -22,6 +22,9 @@ import { Auth } from '../auth/auth'
 import { getLogger } from '../shared/logger'
 import { entries } from '../shared/utilities/tsUtils'
 import { getEnvironmentSpecificMemento } from '../shared/utilities/mementos'
+import { setContext } from '../shared'
+import { telemetry } from '../shared/telemetry'
+import { getSessionId } from '../shared/telemetry/util'
 
 interface MenuOption {
     readonly label: string
@@ -39,6 +42,7 @@ export type DevFunction =
     | 'deleteSsoConnections'
     | 'expireSsoConnections'
     | 'editAuthConnections'
+    | 'forceIdeCrash'
 
 export type DevOptions = {
     context: vscode.ExtensionContext
@@ -47,6 +51,7 @@ export type DevOptions = {
 }
 
 let targetContext: vscode.ExtensionContext
+let globalState: vscode.Memento
 let targetAuth: Auth
 
 /**
@@ -56,52 +61,59 @@ let targetAuth: Auth
  * on selection. There is no support for name-spacing. Just add the relevant
  * feature/module as a description so it can be moved around easier.
  */
-const menuOptions: Record<DevFunction, MenuOption> = {
-    installVsix: {
-        label: 'Install VSIX on Remote Environment',
-        description: 'CodeCatalyst',
-        detail: 'Automatically upload/install a VSIX to a remote host',
-        executor: installVsixCommand,
-    },
-    openTerminal: {
-        label: 'Open Remote Terminal',
-        description: 'CodeCatalyst',
-        detail: 'Opens a new terminal connected to the remote environment',
-        executor: openTerminalCommand,
-    },
-    deleteDevEnv: {
-        label: 'Delete Workspace',
-        description: 'CodeCatalyst',
-        detail: 'Deletes the selected Dev Environment',
-        executor: deleteDevEnvCommand,
-    },
-    editStorage: {
-        label: 'Show or Edit globalState',
-        description: 'VS Code',
-        detail: 'Shows all globalState values, or edit a globalState/secret item',
-        executor: openStorageFromInput,
-    },
-    showEnvVars: {
-        label: 'Show Environment Variables',
-        description: 'AWS Toolkit',
-        detail: 'Shows all environment variable values',
-        executor: () => showState('envvars'),
-    },
-    deleteSsoConnections: {
-        label: 'Auth: Delete SSO Connections',
-        detail: 'Deletes all SSO Connections the extension is using.',
-        executor: deleteSsoConnections,
-    },
-    expireSsoConnections: {
-        label: 'Auth: Expire SSO Connections',
-        detail: 'Force expires all SSO Connections, in to a "needs reauthentication" state.',
-        executor: expireSsoConnections,
-    },
-    editAuthConnections: {
-        label: 'Auth: Edit Connections',
-        detail: 'Opens editor to all Auth Connections the extension is using.',
-        executor: editSsoConnections,
-    },
+const menuOptions: () => Record<DevFunction, MenuOption> = () => {
+    return {
+        installVsix: {
+            label: 'Install VSIX on Remote Environment',
+            description: 'CodeCatalyst',
+            detail: 'Automatically upload/install a VSIX to a remote host',
+            executor: installVsixCommand,
+        },
+        openTerminal: {
+            label: 'Open Remote Terminal',
+            description: 'CodeCatalyst',
+            detail: 'Opens a new terminal connected to the remote environment',
+            executor: openTerminalCommand,
+        },
+        deleteDevEnv: {
+            label: 'Delete Workspace',
+            description: 'CodeCatalyst',
+            detail: 'Deletes the selected Dev Environment',
+            executor: deleteDevEnvCommand,
+        },
+        editStorage: {
+            label: 'Show or Edit globalState',
+            description: 'VS Code',
+            detail: 'Shows all globalState values, or edit a globalState/secret item',
+            executor: openStorageFromInput,
+        },
+        showEnvVars: {
+            label: 'Show Environment Variables',
+            description: 'AWS Toolkit',
+            detail: 'Shows all environment variable values',
+            executor: () => showState('envvars'),
+        },
+        deleteSsoConnections: {
+            label: 'Auth: Delete SSO Connections',
+            detail: 'Deletes all SSO Connections the extension is using.',
+            executor: deleteSsoConnections,
+        },
+        expireSsoConnections: {
+            label: 'Auth: Expire SSO Connections',
+            detail: 'Force expires all SSO Connections, in to a "needs reauthentication" state.',
+            executor: expireSsoConnections,
+        },
+        editAuthConnections: {
+            label: 'Auth: Edit Connections',
+            detail: 'Opens editor to all Auth Connections the extension is using.',
+            executor: editSsoConnections,
+        },
+        forceIdeCrash: {
+            label: 'Crash: Force IDE ExtHost Crash',
+            detail: `Will SIGKILL ExtHost, { pid: ${process.pid}, sessionId: '${getSessionId().slice(0, 8)}-...' }, but the IDE itself will not crash.`,
+            executor: forceQuitIde,
+        },
+    }
 }
 
 /**
@@ -126,7 +138,7 @@ export class DevDocumentProvider implements vscode.TextDocumentContentProvider {
         } else if (uri.path.startsWith('/globalstate')) {
             // lol hax
             // as of November 2023, all of a memento's properties are stored as property `f` when minified
-            return JSON.stringify((targetContext.globalState as any).f, undefined, 4)
+            return JSON.stringify((globalState as any).f, undefined, 4)
         } else {
             return `unknown URI path: ${uri}`
         }
@@ -153,11 +165,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // Internal command to open dev menu for a specific context and options
         vscode.commands.registerCommand('_aws.dev.invokeMenu', (opts: DevOptions) => {
             targetContext = opts.context
+            // eslint-disable-next-line aws-toolkits/no-banned-usages
+            globalState = targetContext.globalState
             targetAuth = opts.auth
             void openMenu(
-                entries(menuOptions)
-                    .filter(e => (opts.menuOptions ?? Object.keys(menuOptions)).includes(e[0]))
-                    .map(e => e[1])
+                entries(menuOptions())
+                    .filter((e) => (opts.menuOptions ?? Object.keys(menuOptions)).includes(e[0]))
+                    .map((e) => e[1])
             )
         }),
         // "AWS (Developer): Watch Logs"
@@ -187,7 +201,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 }
 
 async function openMenu(options: MenuOption[]): Promise<void> {
-    const items = options.map(v => ({
+    const items = options.map((v) => ({
         label: v.label,
         detail: v.detail,
         description: v.description,
@@ -211,16 +225,20 @@ function isSecrets(obj: vscode.Memento | vscode.SecretStorage): obj is vscode.Se
 
 class VirtualObjectFile implements FileProvider {
     private mTime = 0
+    private size = 0
     private readonly onDidChangeEmitter = new vscode.EventEmitter<void>()
     public readonly onDidChange = this.onDidChangeEmitter.event
 
-    public constructor(private readonly storage: vscode.Memento | vscode.SecretStorage, private readonly key: string) {}
+    public constructor(
+        private readonly storage: vscode.Memento | vscode.SecretStorage,
+        private readonly key: string
+    ) {}
 
     /** Emits an event indicating this file's content has changed */
     public refresh() {
         /**
-         * Per {@link vscode.FileSystemProvider.onDidChangeFile}, if the mTime does not change, new file content may
-         * not be retrieved. Without this, when we emit a change the text editor did not update.
+         * Per {@link vscode.FileSystemProvider.onDidChangeFile}, if the mTime and/or size does not change, new file content may
+         * not be retrieved due to optimizations. Without this, when we emit a change the text editor did not update.
          */
         this.mTime++
         this.onDidChangeEmitter.fire()
@@ -228,13 +246,15 @@ class VirtualObjectFile implements FileProvider {
 
     public stat(): { ctime: number; mtime: number; size: number } {
         // This would need to be filled out to track conflicts
-        return { ctime: 0, mtime: this.mTime, size: 0 }
+        return { ctime: 0, mtime: this.mTime, size: this.size }
     }
 
     public async read(): Promise<Uint8Array> {
         const encoder = new TextEncoder()
 
-        return encoder.encode(await this.readStore(this.key))
+        const data = encoder.encode(await this.readStore(this.key))
+        this.size = data.length
+        return data
     }
 
     public async write(content: Uint8Array): Promise<void> {
@@ -280,7 +300,7 @@ class ObjectEditor {
     private readonly tabs: Map<string, Tab> = new Map()
 
     public constructor() {
-        vscode.workspace.onDidCloseTextDocument(doc => {
+        vscode.workspace.onDidCloseTextDocument((doc) => {
             const key = this.fs.uriToKey(doc.uri)
             this.tabs.get(key)?.dispose()
             this.tabs.delete(key)
@@ -294,7 +314,7 @@ class ObjectEditor {
             case 'globalsView':
                 return showState('globalstate')
             case 'globals':
-                return this.openState(targetContext.globalState, key)
+                return this.openState(globalState, key)
             case 'secrets':
                 return this.openState(targetContext.secrets, key)
             case 'auth':
@@ -377,9 +397,9 @@ async function openStorageFromInput() {
                     return new SkipPrompter('')
                 } else if (target === 'globals') {
                     // List all globalState keys in the quickpick menu.
-                    const items = targetContext.globalState
+                    const items = globalState
                         .keys()
-                        .map(key => {
+                        .map((key) => {
                             return {
                                 label: key,
                                 data: key,
@@ -411,15 +431,29 @@ async function editSsoConnections() {
 async function deleteSsoConnections() {
     const conns = targetAuth.listConnections()
     const ssoConns = (await conns).filter(isAnySsoConnection)
-    await Promise.all(ssoConns.map(conn => targetAuth.deleteConnection(conn)))
-    void vscode.window.showInformationMessage(`Deleted: ${ssoConns.map(c => c.startUrl).join(', ')}`)
+    await Promise.all(ssoConns.map((conn) => targetAuth.deleteConnection(conn)))
+    void vscode.window.showInformationMessage(`Deleted: ${ssoConns.map((c) => c.startUrl).join(', ')}`)
 }
 
 async function expireSsoConnections() {
-    const conns = targetAuth.listConnections()
-    const ssoConns = (await conns).filter(isAnySsoConnection)
-    await Promise.all(ssoConns.map(conn => targetAuth.expireConnection(conn)))
-    void vscode.window.showInformationMessage(`Expired: ${ssoConns.map(c => c.startUrl).join(', ')}`)
+    return telemetry.function_call.run(
+        async () => {
+            const conns = targetAuth.listConnections()
+            const ssoConns = (await conns).filter(isAnySsoConnection)
+            await Promise.all(ssoConns.map((conn) => targetAuth.expireConnection(conn)))
+            void vscode.window.showInformationMessage(`Expired: ${ssoConns.map((c) => c.startUrl).join(', ')}`)
+        },
+        { emit: false, functionId: { name: 'expireSsoConnectionsDev' } }
+    )
+}
+
+export function forceQuitIde() {
+    // This current process is the ExtensionHost. Killing it will cause all the extensions to crash
+    // for the current ExtensionHost (unless using "extensions.experimental.affinity").
+    // The IDE instance itself will remaing running, but a new ExtHost will spawn within it.
+    // The PPID (parent process) is vscode itself, killing it crashes all vscode instances.
+    const vsCodePid = process.pid
+    process.kill(vsCodePid, 'SIGKILL') // SIGTERM would be the graceful shutdown
 }
 
 async function showState(path: string) {
@@ -431,5 +465,5 @@ async function showState(path: string) {
 export const openStorageCommand = Commands.from(ObjectEditor).declareOpenStorage('_aws.dev.openStorage')
 
 export async function updateDevMode() {
-    await vscode.commands.executeCommand('setContext', 'aws.isDevMode', DevSettings.instance.isDevMode())
+    await setContext('aws.isDevMode', DevSettings.instance.isDevMode())
 }

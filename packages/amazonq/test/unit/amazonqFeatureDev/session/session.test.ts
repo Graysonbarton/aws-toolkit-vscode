@@ -20,7 +20,7 @@ import {
 } from 'aws-core-vscode/test'
 import { CurrentWsFolders, CodeGenState, FeatureDevClient, Messenger } from 'aws-core-vscode/amazonqFeatureDev'
 import path from 'path'
-import { FileSystemCommon } from 'aws-core-vscode/srcShared'
+import { fs } from 'aws-core-vscode/shared'
 
 describe('session', () => {
     const conversationID = '12345'
@@ -61,7 +61,6 @@ describe('session', () => {
 
             const uploadID = '789'
             const tabID = '123'
-            const testApproach = 'test-approach'
             const workspaceFolders = [controllerSetup.workspaceFolder] as CurrentWsFolders
             workspaceFolderUriFsPath = controllerSetup.workspaceFolder.uri.fsPath
             uri = generateVirtualMemoryUri(uploadID, notRejectedFileName)
@@ -76,7 +75,6 @@ describe('session', () => {
 
             const codeGenState = new CodeGenState(
                 testConfig,
-                testApproach,
                 [
                     {
                         zipFilePath: notRejectedFileName,
@@ -98,7 +96,8 @@ describe('session', () => {
                 [],
                 [],
                 tabID,
-                0
+                0,
+                {}
             )
             const session = await createSession({ messenger, sessionState: codeGenState, conversationID })
             encodedContent = new TextEncoder().encode(notRejectedFileContent)
@@ -106,7 +105,7 @@ describe('session', () => {
             return session
         }
         it('only insert non rejected files', async () => {
-            const fsSpyWriteFile = sinon.spy(FileSystemCommon.instance, 'writeFile')
+            const fsSpyWriteFile = sinon.spy(fs, 'writeFile')
             const session = await createCodeGenState()
             await sessionWriteFile(session, uri, encodedContent)
             await session.insertChanges()

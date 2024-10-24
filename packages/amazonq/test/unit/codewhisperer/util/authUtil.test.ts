@@ -13,15 +13,15 @@ import {
 } from 'aws-core-vscode/codewhisperer'
 import {
     assertTelemetry,
-    captureEventOnce,
     getTestWindow,
     SeverityLevel,
     createBuilderIdProfile,
     createSsoProfile,
     createTestAuth,
+    captureEventNTimes,
 } from 'aws-core-vscode/test'
 import { Auth, Connection, isAnySsoConnection, isBuilderIdConnection } from 'aws-core-vscode/auth'
-import { vscodeComponent } from 'aws-core-vscode/shared'
+import { globals, vscodeComponent } from 'aws-core-vscode/shared'
 
 const enterpriseSsoStartUrl = 'https://enterprise.awsapps.com/start'
 
@@ -30,7 +30,7 @@ describe('AuthUtil', async function () {
     let authUtil: AuthUtil
 
     beforeEach(async function () {
-        auth = createTestAuth()
+        auth = createTestAuth(globals.globalState)
         authUtil = new AuthUtil(auth)
     })
 
@@ -39,7 +39,7 @@ describe('AuthUtil', async function () {
     })
 
     it('if there is no valid AwsBuilderID conn, it will create one and use it', async function () {
-        getTestWindow().onDidShowQuickPick(async picker => {
+        getTestWindow().onDidShowQuickPick(async (picker) => {
             await picker.untilReady()
             picker.acceptItem(picker.items[1])
         })
@@ -55,7 +55,7 @@ describe('AuthUtil', async function () {
         const existingBuilderId = await auth.createConnection(
             createBuilderIdProfile({ scopes: codeWhispererCoreScopes })
         )
-        getTestWindow().onDidShowQuickPick(async picker => {
+        getTestWindow().onDidShowQuickPick(async (picker) => {
             await picker.untilReady()
             picker.acceptItem(picker.items[1])
         })
@@ -69,7 +69,7 @@ describe('AuthUtil', async function () {
     })
 
     it('if there is no valid enterprise SSO conn, will create and use one', async function () {
-        getTestWindow().onDidShowQuickPick(async picker => {
+        getTestWindow().onDidShowQuickPick(async (picker) => {
             await picker.untilReady()
             picker.acceptItem(picker.items[1])
         })
@@ -81,7 +81,7 @@ describe('AuthUtil', async function () {
     })
 
     it('should add scopes + connect to existing IAM Identity Center connection', async function () {
-        getTestWindow().onDidShowMessage(async message => {
+        getTestWindow().onDidShowMessage(async (message) => {
             assert.ok(message.modal)
             message.selectItem('Proceed')
         })
@@ -117,7 +117,7 @@ describe('AuthUtil', async function () {
     })
 
     it('should show reauthenticate prompt', async function () {
-        getTestWindow().onDidShowMessage(m => {
+        getTestWindow().onDidShowMessage((m) => {
             if (m.severity === SeverityLevel.Information) {
                 m.close()
             }
@@ -125,7 +125,7 @@ describe('AuthUtil', async function () {
 
         await authUtil.showReauthenticatePrompt()
 
-        const warningMessage = getTestWindow().shownMessages.filter(m => m.severity === SeverityLevel.Information)
+        const warningMessage = getTestWindow().shownMessages.filter((m) => m.severity === SeverityLevel.Information)
         assert.strictEqual(warningMessage.length, 1)
         assert.strictEqual(warningMessage[0].message, `Your Amazon Q connection has expired. Please re-authenticate.`)
         warningMessage[0].close()
@@ -147,7 +147,7 @@ describe('AuthUtil', async function () {
             createSsoProfile({ startUrl: enterpriseSsoStartUrl, scopes: codeWhispererChatScopes })
         )
         await auth.useConnection(conn)
-        getTestWindow().onDidShowMessage(m => {
+        getTestWindow().onDidShowMessage((m) => {
             m.selectItem('Re-authenticate')
         })
 
@@ -231,11 +231,13 @@ describe('AuthUtil', async function () {
         assert.strictEqual(auth.activeConnection?.id, authUtil.conn?.id)
 
         // Switch to unsupported connection
-        const cwAuthUpdatedConnection = captureEventOnce(authUtil.secondaryAuth.onDidChangeActiveConnection)
+        const cwAuthUpdatedConnection = captureEventNTimes(authUtil.secondaryAuth.onDidChangeActiveConnection, 2)
         await auth.useConnection(unsupportedConn)
+        // - This is triggered when the main Auth connection is switched
+        // - This is triggered by registerAuthListener() when it saves the previous active connection as a fallback.
         await cwAuthUpdatedConnection
 
-        // Is using the fallback connection
+        // TODO in a refactor see if we can simplify multiple multiple triggers on the same event.
         assert.ok(authUtil.isConnected())
         assert.ok(authUtil.isUsingSavedConnection)
         assert.notStrictEqual(auth.activeConnection?.id, authUtil.conn?.id)
@@ -248,7 +250,7 @@ describe('AuthUtil', async function () {
         await authUtil.connectToAwsBuilderId()
         assert.ok(authUtil.isConnected())
 
-        const ssoConnectionIds = new Set(auth.activeConnectionEvents.emits.filter(isAnySsoConnection).map(c => c.id))
+        const ssoConnectionIds = new Set(auth.activeConnectionEvents.emits.filter(isAnySsoConnection).map((c) => c.id))
         assert.strictEqual(ssoConnectionIds.size, 1, 'Expected exactly 1 unique SSO connection id')
         assert.strictEqual((await auth.listConnections()).filter(isAnySsoConnection).length, 1)
     })
@@ -278,6 +280,26 @@ describe('AuthUtil', async function () {
         assert.strictEqual(authUtil.reformatStartUrl(expected + '/#/'), expected)
         assert.strictEqual(authUtil.reformatStartUrl(expected + '####'), expected)
     })
+
+    it(`clearExtraConnections()`, async function () {
+        const conn1 = await auth.createConnection(createBuilderIdProfile())
+        const conn2 = await auth.createConnection(createSsoProfile({ startUrl: enterpriseSsoStartUrl }))
+        const conn3 = await auth.createConnection(createSsoProfile({ startUrl: enterpriseSsoStartUrl + 1 }))
+        // validate listConnections shows all connections
+        assert.deepStrictEqual(
+            (await authUtil.auth.listConnections()).map((conn) => conn.id).sort((a, b) => a.localeCompare(b)),
+            [conn1, conn2, conn3].map((conn) => conn.id).sort((a, b) => a.localeCompare(b))
+        )
+        await authUtil.secondaryAuth.useNewConnection(conn3)
+
+        await authUtil.clearExtraConnections() // method under test
+
+        // Only the conn that AuthUtil is using is remaining
+        assert.deepStrictEqual(
+            (await authUtil.auth.listConnections()).map((conn) => conn.id),
+            [conn3.id]
+        )
+    })
 })
 
 describe('getChatAuthState()', function () {
@@ -286,7 +308,7 @@ describe('getChatAuthState()', function () {
     let laterDate: Date
 
     beforeEach(async function () {
-        auth = createTestAuth()
+        auth = createTestAuth(globals.globalState)
         authUtil = new AuthUtil(auth)
 
         laterDate = new Date(Date.now() + 10_000_000)

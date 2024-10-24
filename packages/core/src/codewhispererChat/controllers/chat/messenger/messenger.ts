@@ -9,6 +9,7 @@ import {
     AuthNeededException,
     CodeReference,
     EditorContextCommandMessage,
+    OpenSettingsMessage,
     QuickActionMessage,
 } from '../../../view/connector/connector'
 import { EditorContextCommandType } from '../../../commands/registerCommands'
@@ -22,7 +23,7 @@ import { ChatSession } from '../../../clients/chat/v0/chat'
 import { ChatException } from './model'
 import { CWCTelemetryHelper } from '../telemetryHelper'
 import { ChatPromptCommandType, TriggerPayload } from '../model'
-import { ToolkitError } from '../../../../shared/errors'
+import { getHttpStatusCode, getRequestId, ToolkitError } from '../../../../shared/errors'
 import { keys } from '../../../../shared/utilities/tsUtils'
 import { getLogger } from '../../../../shared/logger/logger'
 import { FeatureAuthState } from '../../../../codewhisperer/util/authUtil'
@@ -31,6 +32,8 @@ import { userGuideURL } from '../../../../amazonq/webview/ui/texts/constants'
 import { CodeScanIssue } from '../../../../codewhisperer/models/model'
 import { marked } from 'marked'
 import { JSDOM } from 'jsdom'
+import { LspController } from '../../../../amazonq/lsp/lspController'
+import { extractCodeBlockLanguage } from '../../../../shared/markdown'
 
 export type StaticTextResponseType = 'quick-action-help' | 'onboarding-help' | 'transform' | 'help'
 
@@ -84,18 +87,29 @@ export class Messenger {
                     relatedSuggestions: undefined,
                     triggerID,
                     messageID: '',
+                    userIntent: undefined,
+                    codeBlockLanguage: undefined,
                 },
                 tabID
             )
         )
     }
-
+    /**
+     * Tries to calculate the total number of code blocks.
+     * NOTES:
+     *  - Not correct on all examples. Some may cause it to return 0 unexpectedly.
+     *  - Plans in place (as of 4/22/2024) to move this server side.
+     *  - See original pr: https://github.com/aws/aws-toolkit-vscode/pull/4761 for more details.
+     * @param message raw message response from codewhisperer client.
+     * @returns count of multi-line code blocks in response.
+     */
     public async countTotalNumberOfCodeBlocks(message: string): Promise<number> {
+        //TODO: remove this when moved to server-side.
         if (message === undefined) {
             return 0
         }
 
-        // // To Convert Markdown text to HTML using marked library
+        // To Convert Markdown text to HTML using marked library
         const html = await marked(message)
 
         const dom = new JSDOM(html)
@@ -119,6 +133,7 @@ export class Messenger {
         let codeReference: CodeReference[] = []
         let followUps: FollowUp[] = []
         let relatedSuggestions: Suggestion[] = []
+        let codeBlockLanguage: string = 'plaintext'
 
         if (response.generateAssistantResponseResponse === undefined) {
             throw new ToolkitError(
@@ -126,6 +141,13 @@ export class Messenger {
             )
         }
         this.telemetryHelper.setResponseStreamStartTime(tabID)
+        if (
+            triggerPayload.relevantTextDocuments &&
+            triggerPayload.relevantTextDocuments.length > 0 &&
+            triggerPayload.useRelevantDocuments === true
+        ) {
+            this.telemetryHelper.setResponseFromProjectContext(messageID)
+        }
 
         const eventCounts = new Map<string, number>()
         waitUntil(
@@ -147,7 +169,7 @@ export class Messenger {
                     ) {
                         codeReference = [
                             ...codeReference,
-                            ...chatEvent.codeReferenceEvent.references.map(reference => ({
+                            ...chatEvent.codeReferenceEvent.references.map((reference) => ({
                                 ...reference,
                                 recommendationContentSpan: {
                                     start: reference.recommendationContentSpan?.start ?? 0,
@@ -163,7 +185,9 @@ export class Messenger {
                         chatEvent.assistantResponseEvent.content.length > 0
                     ) {
                         message += chatEvent.assistantResponseEvent.content
-
+                        if (codeBlockLanguage === 'plaintext') {
+                            codeBlockLanguage = extractCodeBlockLanguage(message)
+                        }
                         this.dispatcher.sendChatMessage(
                             new ChatMessage(
                                 {
@@ -175,6 +199,8 @@ export class Messenger {
                                     codeReference,
                                     triggerID,
                                     messageID,
+                                    userIntent: triggerPayload.userIntent,
+                                    codeBlockLanguage: codeBlockLanguage,
                                 },
                                 tabID
                             )
@@ -218,8 +244,8 @@ export class Messenger {
 
                 if (error instanceof CodeWhispererStreamingServiceException) {
                     errorMessage = error.message
-                    statusCode = error.$metadata?.httpStatusCode ?? 0
-                    requestID = error.$metadata.requestId
+                    statusCode = getHttpStatusCode(error) ?? 0
+                    requestID = getRequestId(error)
                 }
 
                 this.showChatExceptionMessage(
@@ -234,6 +260,31 @@ export class Messenger {
                 this.telemetryHelper.recordMessageResponseError(triggerPayload, tabID, statusCode ?? 0)
             })
             .finally(async () => {
+                if (
+                    triggerPayload.relevantTextDocuments &&
+                    triggerPayload.relevantTextDocuments.length > 0 &&
+                    LspController.instance.isIndexingInProgress()
+                ) {
+                    this.dispatcher.sendChatMessage(
+                        new ChatMessage(
+                            {
+                                message:
+                                    message +
+                                    ` \n\nBy the way, I'm still indexing this project for full context from your workspace. I may have a better response in a few minutes when it's complete if you'd like to try again then.`,
+                                messageType: 'answer-part',
+                                followUps: undefined,
+                                followUpsHeader: undefined,
+                                relatedSuggestions: undefined,
+                                triggerID,
+                                messageID,
+                                userIntent: triggerPayload.userIntent,
+                                codeBlockLanguage: codeBlockLanguage,
+                            },
+                            tabID
+                        )
+                    )
+                }
+
                 if (relatedSuggestions.length !== 0) {
                     this.dispatcher.sendChatMessage(
                         new ChatMessage(
@@ -245,6 +296,8 @@ export class Messenger {
                                 relatedSuggestions,
                                 triggerID,
                                 messageID,
+                                userIntent: triggerPayload.userIntent,
+                                codeBlockLanguage: undefined,
                             },
                             tabID
                         )
@@ -261,6 +314,8 @@ export class Messenger {
                             relatedSuggestions: undefined,
                             triggerID,
                             messageID,
+                            userIntent: triggerPayload.userIntent,
+                            codeBlockLanguage: undefined,
                         },
                         tabID
                     )
@@ -307,6 +362,7 @@ export class Messenger {
         ['aws.amazonq.fixCode', 'Fix'],
         ['aws.amazonq.optimizeCode', 'Optimize'],
         ['aws.amazonq.sendToPrompt', 'Send to prompt'],
+        ['aws.amazonq.generateUnitTests', 'Generate unit tests for'],
     ])
 
     public sendStaticTextResponse(type: StaticTextResponseType, triggerID: string, tabID: string) {
@@ -383,6 +439,8 @@ export class Messenger {
                     relatedSuggestions: undefined,
                     triggerID,
                     messageID: 'static_message_' + triggerID,
+                    userIntent: undefined,
+                    codeBlockLanguage: undefined,
                 },
                 tabID
             )
@@ -459,5 +517,9 @@ export class Messenger {
         this.dispatcher.sendErrorMessage(
             new ErrorMessage('An error occurred while processing your request.', message.trimEnd().trimStart(), tabID)
         )
+    }
+
+    public sendOpenSettingsMessage(triggerId: string, tabID: string) {
+        this.dispatcher.sendOpenSettingsMessage(new OpenSettingsMessage(tabID))
     }
 }

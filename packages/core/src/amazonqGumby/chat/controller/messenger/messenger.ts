@@ -9,7 +9,6 @@
  */
 
 import { AuthFollowUpType, AuthMessageDataMap } from '../../../../amazonq/auth/model'
-import { ChatItemType } from '../../../../amazonqFeatureDev/models'
 import { JDKVersion, TransformationCandidateProject, transformByQState } from '../../../../codewhisperer/models/model'
 import { FeatureAuthState } from '../../../../codewhisperer/util/authUtil'
 import * as CodeWhispererConstants from '../../../../codewhisperer/models/constants'
@@ -28,6 +27,7 @@ import {
 import { ChatItemButton, ChatItemFormItem } from '@aws/mynah-ui/dist/static'
 import MessengerUtils, { ButtonActions } from './messengerUtils'
 import DependencyVersions from '../../../models/dependencies'
+import { ChatItemType } from '../../../../amazonq/commons/model'
 
 export type StaticTextResponseType =
     | 'transform'
@@ -45,8 +45,6 @@ export type UnrecoverableErrorType =
     | 'unsupported-source-jdk-version'
     | 'upload-to-s3-failed'
     | 'job-start-failed'
-
-export type ErrorResponseType = 'no-alternate-dependencies-found'
 
 export enum GumbyNamedMessages {
     COMPILATION_PROGRESS_MESSAGE = 'gumbyProjectCompilationMessage',
@@ -111,11 +109,50 @@ export class Messenger {
         this.dispatcher.sendAuthenticationUpdate(new AuthenticationUpdateMessage(gumbyEnabled, authenticatingTabIDs))
     }
 
+    public async sendSkipTestsPrompt(tabID: string) {
+        const formItems: ChatItemFormItem[] = []
+        formItems.push({
+            id: 'GumbyTransformSkipTestsForm',
+            type: 'select',
+            title: CodeWhispererConstants.skipUnitTestsFormTitle,
+            mandatory: true,
+            options: [
+                {
+                    value: CodeWhispererConstants.runUnitTestsMessage,
+                    label: CodeWhispererConstants.runUnitTestsMessage,
+                },
+                {
+                    value: CodeWhispererConstants.skipUnitTestsMessage,
+                    label: CodeWhispererConstants.skipUnitTestsMessage,
+                },
+            ],
+        })
+
+        this.dispatcher.sendAsyncEventProgress(
+            new AsyncEventProgressMessage(tabID, {
+                inProgress: true,
+                message: CodeWhispererConstants.skipUnitTestsFormMessage,
+            })
+        )
+
+        this.dispatcher.sendChatPrompt(
+            new ChatPrompt(
+                {
+                    message: 'Q Code Transformation',
+                    formItems: formItems,
+                },
+                'TransformSkipTestsForm',
+                tabID,
+                false
+            )
+        )
+    }
+
     public async sendProjectPrompt(projects: TransformationCandidateProject[], tabID: string) {
         const projectFormOptions: { value: any; label: string }[] = []
         const detectedJavaVersions = new Array<JDKVersion | undefined>()
 
-        projects.forEach(candidateProject => {
+        projects.forEach((candidateProject) => {
             projectFormOptions.push({
                 value: candidateProject.path,
                 label: candidateProject.name,
@@ -127,7 +164,7 @@ export class Messenger {
         formItems.push({
             id: 'GumbyTransformProjectForm',
             type: 'select',
-            title: 'Choose a project to transform',
+            title: CodeWhispererConstants.chooseProjectFormTitle,
             mandatory: true,
 
             options: projectFormOptions,
@@ -136,7 +173,7 @@ export class Messenger {
         formItems.push({
             id: 'GumbyTransformJdkFromForm',
             type: 'select',
-            title: 'Choose the source code version',
+            title: CodeWhispererConstants.chooseSourceVersionFormTitle,
             mandatory: true,
             options: [
                 {
@@ -157,7 +194,7 @@ export class Messenger {
         formItems.push({
             id: 'GumbyTransformJdkToForm',
             type: 'select',
-            title: 'Choose the target code version',
+            title: CodeWhispererConstants.chooseTargetVersionFormTitle,
             mandatory: true,
             options: [
                 {
@@ -356,15 +393,7 @@ export class Messenger {
      * informational purposes, or some other error workflow is meant to contribute a
      * follow-up with a user action.
      */
-    public sendKnownErrorResponse(type: ErrorResponseType, tabID: string) {
-        let message = '...'
-
-        switch (type) {
-            case 'no-alternate-dependencies-found':
-                message = `I could not find any other versions of this dependency in your local Maven repository. Try transforming the dependency to make it compatible with Java 17, and then try transforming this module again.`
-                break
-        }
-
+    public sendKnownErrorResponse(tabID: string, message: string) {
         this.dispatcher.sendChatMessage(
             new ChatMessage(
                 {
@@ -417,7 +446,7 @@ export class Messenger {
         projectName: string,
         fromJDKVersion: JDKVersion,
         toJDKVersion: JDKVersion,
-        tabID: any
+        tabID: string
     ) {
         const message = `### Transformation details
 -------------
@@ -429,6 +458,11 @@ export class Messenger {
     `
 
         this.dispatcher.sendChatMessage(new ChatMessage({ message, messageType: 'prompt' }, tabID))
+    }
+
+    public sendSkipTestsSelectionMessage(skipTestsSelection: string, tabID: string) {
+        const message = `Okay, I will ${skipTestsSelection.toLowerCase()} when building your project.`
+        this.dispatcher.sendChatMessage(new ChatMessage({ message, messageType: 'ai-prompt' }, tabID))
     }
 
     public sendHumanInTheLoopInitialMessage(tabID: string, codeSnippet: string) {
@@ -493,7 +527,7 @@ ${codeSnippet}
 
         const valueFormOptions: { value: any; label: string }[] = []
 
-        versions.allVersions.forEach(version => {
+        versions.allVersions.forEach((version) => {
             valueFormOptions.push({
                 value: version,
                 label: version,

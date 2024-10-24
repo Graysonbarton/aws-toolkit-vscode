@@ -222,13 +222,7 @@
                     Connecting to IAM...
                 </div>
                 <div v-else class="header bottomMargin">Authenticating in browser...</div>
-                <button
-                    class="continue-button"
-                    v-on:click="handleCancelButton()"
-                    style="color: #6f6f6f; background-color: var(--vscode-input-background)"
-                >
-                    Cancel
-                </button>
+                <button class="continue-button" v-on:click="handleCancelButton()">Cancel</button>
             </div>
         </template>
 
@@ -284,17 +278,12 @@ import { LoginOption } from './types'
 import { CommonAuthWebview } from './backend'
 import { WebviewClientFactory } from '../../../webviews/client'
 import { Region } from '../../../shared/regions/endpoints'
+import { ssoUrlFormatRegex, ssoUrlFormatMessage } from '../../../auth/sso/constants'
 
 const client = WebviewClientFactory.create<CommonAuthWebview>()
 
 /** Where the user is currently in the builder id setup process */
 type Stage = 'START' | 'SSO_FORM' | 'CONNECTED' | 'AUTHENTICATING' | 'AWS_PROFILE'
-
-function validateSsoUrlFormat(url: string) {
-    const regex =
-        /^(https?:\/\/(.+)\.awsapps\.com\/start|https?:\/\/identitycenter\.amazonaws\.com\/ssoins-[\da-zA-Z]{16})$/
-    return regex.test(url)
-}
 
 function getCredentialId(loginOption: LoginOption) {
     switch (loginOption) {
@@ -487,10 +476,9 @@ export default defineComponent({
             }
         },
         handleUrlInput() {
-            if (this.startUrl && !validateSsoUrlFormat(this.startUrl)) {
-                this.startUrlError =
-                    'URLs must start with http:// or https://. Example: https://d-xxxxxxxxxx.awsapps.com/start'
-            } else if (this.startUrl && this.existingStartUrls.some(url => url === this.startUrl)) {
+            if (this.startUrl && !ssoUrlFormatRegex.test(this.startUrl)) {
+                this.startUrlError = ssoUrlFormatMessage
+            } else if (this.startUrl && this.existingStartUrls.some((url) => url === this.startUrl)) {
                 this.startUrlError =
                     'A connection for this start URL already exists. Sign out before creating a new one.'
             } else {
@@ -526,7 +514,7 @@ export default defineComponent({
             // to reuse connections in AWS Toolkit & Amazon Q
             const sharedConnections = await client.fetchConnections()
             sharedConnections
-                ?.filter(c => !this.existingStartUrls.includes(c.startUrl))
+                ?.filter((c) => !this.existingStartUrls.includes(c.startUrl))
                 .forEach((connection, index) => {
                     this.importedLogins.push({
                         id: LoginOption.IMPORTED_LOGINS + index,
@@ -541,7 +529,7 @@ export default defineComponent({
             this.$forceUpdate()
         },
         async updateExistingStartUrls() {
-            this.existingStartUrls = (await client.listSsoConnections()).map(conn => conn.startUrl)
+            this.existingStartUrls = (await client.listSsoConnections()).map((conn) => conn.startUrl)
         },
         async getDefaultStartUrl() {
             return await client.getDefaultStartUrl()
@@ -581,7 +569,7 @@ export default defineComponent({
 .logoIcon {
     display: flex;
     flex-direction: row;
-    justify-content: left;
+    justify-content: center;
     align-items: flex-start;
     height: auto;
 }
@@ -604,17 +592,8 @@ export default defineComponent({
     margin: auto;
     position: absolute;
     top: var(--auth-container-top);
-    width: 260px;
-}
-
-.auth-container[data-app='AMAZONQ'] {
-    border-radius: 11px;
-    background: rgba(30, 30, 30, 0.8);
-    padding: 15px;
-}
-
-.vscode-light .auth-container[data-app='AMAZONQ'] {
-    background: rgba(255, 255, 255, 1);
+    max-width: 260px;
+    width: 90vw;
 }
 
 .header {
@@ -676,6 +655,26 @@ export default defineComponent({
     color: #6f6f6f;
     cursor: not-allowed;
 }
+body.vscode-high-contrast:not(body.vscode-high-contrast-light) .continue-button {
+    background-color: white;
+    color: var(--vscode-input-background);
+}
+
+body.vscode-high-contrast:not(body.vscode-high-contrast-light) .continue-button:disabled {
+    background-color: #6f6f6f;
+    color: var(--vscode-input-background);
+}
+
+body.vscode-high-contrast-light .continue-button {
+    background-color: var(--vscode-button-background);
+    color: white;
+}
+
+body.vscode-high-contrast-light .continue-button:disabled {
+    background-color: #6f6f6f;
+    color: var(--vscode-input-background);
+}
+
 .urlInput {
     background-color: var(--vscode-input-background);
     width: 244px;
@@ -689,10 +688,12 @@ export default defineComponent({
     font-size: var(--font-size-base);
     font-weight: 400;
 }
-body.vscode-light .urlInput {
+body.vscode-light .urlInput,
+body.vscode-high-contrast-light .urlInput {
     color: black;
 }
-body.vscode-dark .urlInput {
+body.vscode-dark .urlInput,
+body.vscode-high-contrast:not(body.vscode-high-contrast-light) .urlInput {
     color: #cccccc;
 }
 .iamInput {
@@ -708,10 +709,13 @@ body.vscode-dark .urlInput {
     font-size: var(--font-size-base);
     font-weight: 400;
 }
-body.vscode-light .iamInput {
+body.vscode-light .iamInput,
+body.vscode-high-contrast-light .iamInput {
     color: black;
 }
-body.vscode-dark .iamInput {
+
+body.vscode-dark .iamInput,
+body.vscode-high-contrast:not(body.vscode-high-contrast-light) .iamInput {
     color: #cccccc;
 }
 .regionSelect {
@@ -726,10 +730,13 @@ body.vscode-dark .iamInput {
     font-size: var(--font-size-base);
     font-weight: 400;
 }
-body.vscode-light .regionSelect {
+body.vscode-light .regionSelect,
+body.vscode-high-contrast-light .regionSelect {
     color: black;
 }
-body.vscode-dark .regionSelect {
+
+body.vscode-dark .regionSelect,
+body.vscode-high-contrast:not(body.vscode-high-contrast-light) .regionSelect {
     color: white;
 }
 .start-url-error {

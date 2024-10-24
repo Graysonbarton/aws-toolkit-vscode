@@ -16,8 +16,9 @@ import { getIcon, codicon } from '../icons'
 import globals from '../extensionGlobals'
 import { openUrl } from './vsCodeUtils'
 import { AmazonQPromptSettings, ToolkitPromptSettings } from '../../shared/settings'
-import { telemetry } from '../telemetry/telemetry'
+import { telemetry, ToolkitShowNotification } from '../telemetry/telemetry'
 import { vscodeComponent } from '../vscode/commands2'
+import { getTelemetryReasonDesc } from '../errors'
 
 export const messages = {
     editCredentials(icon: boolean) {
@@ -35,21 +36,31 @@ export function makeFailedWriteMessage(filename: string): string {
     return message
 }
 
-function showMessageWithItems(
-    message: string,
+export function showMessage(
     kind: 'info' | 'warn' | 'error' = 'error',
+    message: string,
     items: string[] = [],
-    useModal: boolean = false
+    options: vscode.MessageOptions & { telemetry?: boolean } = {},
+    metric: Partial<ToolkitShowNotification> = {}
 ): Thenable<string | undefined> {
-    switch (kind) {
-        case 'info':
-            return vscode.window.showInformationMessage(message, { modal: useModal }, ...items)
-        case 'warn':
-            return vscode.window.showWarningMessage(message, { modal: useModal }, ...items)
-        case 'error':
-        default:
-            return vscode.window.showErrorMessage(message, { modal: useModal }, ...items)
-    }
+    return telemetry.toolkit_showNotification.run(async (span) => {
+        span.record({
+            passive: true,
+            id: 'unknown',
+            component: 'editor',
+            ...metric,
+        })
+
+        switch (kind) {
+            case 'info':
+                return vscode.window.showInformationMessage(message, options, ...items)
+            case 'warn':
+                return vscode.window.showWarningMessage(message, options, ...items)
+            case 'error':
+            default:
+                return vscode.window.showErrorMessage(message, options, ...items)
+        }
+    })
 }
 
 /**
@@ -75,8 +86,17 @@ export async function showMessageWithUrl(
     const uri = typeof url === 'string' ? vscode.Uri.parse(url) : url
     const items = [...extraItems, urlItem]
 
-    const p = showMessageWithItems(message, kind, items, useModal)
-    return p.then<string | undefined>(selection => {
+    const p = showMessage(
+        kind,
+        message,
+        items,
+        { modal: useModal },
+        {
+            id: 'showMessageWithUrl',
+            reasonDesc: getTelemetryReasonDesc(message),
+        }
+    )
+    return p.then<string | undefined>((selection) => {
         if (selection === urlItem) {
             void openUrl(uri)
         }
@@ -102,8 +122,17 @@ export async function showViewLogsMessage(
     const logsItem = localize('AWS.generic.message.viewLogs', 'View Logs...')
     const items = [...extraItems, logsItem]
 
-    const p = showMessageWithItems(message, kind, items)
-    return p.then<string | undefined>(selection => {
+    const p = showMessage(
+        kind,
+        message,
+        items,
+        {},
+        {
+            id: 'showViewLogsMessage',
+            reasonDesc: getTelemetryReasonDesc(message),
+        }
+    )
+    return p.then<string | undefined>((selection) => {
         if (selection === logsItem) {
             globals.logOutputChannel.show(true)
         }
@@ -172,7 +201,7 @@ export async function showReauthenticateMessage({
 
     await telemetry.toolkit_showNotification.run(async () => {
         telemetry.record({ id: suppressId, source })
-        await vscode.window.showInformationMessage(message, connect, localizedText.dontShow).then(async resp => {
+        await vscode.window.showInformationMessage(message, connect, localizedText.dontShow).then(async (resp) => {
             await telemetry.toolkit_invokeAction.run(async () => {
                 telemetry.record({ id: suppressId, source })
 
@@ -364,17 +393,14 @@ export async function copyToClipboard(data: string, label?: string): Promise<voi
     getLogger().verbose('copied %s to clipboard: %O', label ?? '', data)
 }
 
-export async function showOnce<T>(
-    key: string,
-    fn: () => Promise<T>,
-    memento = globals.context.globalState
-): Promise<T | undefined> {
-    if (memento.get(key)) {
+/** TODO: eliminate this, callers should use `PromptSettings` instead. */
+export async function showOnce<T>(key: 'sam.sync.updateMessage', fn: () => Promise<T>): Promise<T | undefined> {
+    if (globals.globalState.tryGet(key, Boolean, false)) {
         return
     }
 
     const result = fn()
-    await memento.update(key, true)
+    await globals.globalState.update(key, true)
 
     return result
 }

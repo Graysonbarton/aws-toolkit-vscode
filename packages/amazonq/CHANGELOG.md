@@ -1,3 +1,150 @@
+## 1.30.0 2024-10-17
+
+- **Bug Fix** Various fixes and changes
+
+## 1.29.0 2024-10-10
+
+- **Bug Fix** Amazon Q /dev: include telemetry for workspace usage when generating new files
+- **Bug Fix** Amazon Q extension may fail to start if AWS Toolkit extension fails to start
+- **Bug Fix** Start language server by default
+- **Bug Fix** Amazon Q Feature Dev: Add error messages when the upload URL expires
+- **Bug Fix** Amazon Q (/dev): view diffs of previous /dev iterations
+- **Bug Fix** Q dev handle no change required
+- **Deprecation** The next release of this extension will require VS Code 1.83.0 or newer.
+- **Feature** Automatically pause and resume @workspace indexing when OS CPU load is high
+- **Feature** Add buttons to code blocks to view and accept diffs.
+- **Feature** Inline completion for more json files, and all yaml files
+- **Feature** Show a one-time warning if new VS Code is required
+- **Removal** Minimum required VSCode version is now 1.83
+
+## 1.28.0 2024-10-03
+
+- **Bug Fix** Amazon Q /dev: define first folder as a root path for LLM-created files when using workspaces
+- **Feature** Amazon Q Code Transformation: allow users to skip running tests
+- **Feature** Amazon Q Developer: Updated legal disclaimer text
+
+## 1.27.0 2024-09-27
+
+- **Bug Fix** Security Scan: Fixes an issue that incorrectly removes hardcoded credentials detections from auto scans.
+
+## 1.26.0 2024-09-19
+
+- **Bug Fix** Security Scan: Fixed an issue where the wrong icon was used in the status bar menu.
+- **Bug Fix** Disable Amazon Q LSP in AL2
+- **Bug Fix** Amazon Q Chat: Fix shifted chat contents when closing and opening chat panel back
+- **Bug Fix** Security Scan: Minor styling improvements in the security issue webview panel
+- **Bug Fix** Amazon Q Chat: Fix tooltip remaining on screen when closing and opening chat panel back
+- **Bug Fix** Auth: Login state not updating across multiple VS Code windows.
+- **Feature** Support @workspace queries for specific files like `@workspace what does test.ts do? `. 
+
+## 1.25.0 2024-09-12
+
+- **Bug Fix** Amazon Q Chat: Fixed inline code blocks are not vertically aligned with texts
+- **Feature** Record telemetry event when Amazon Q extension is uninstalled.
+- **Feature** Improve workspace indexing by only index files that are changed since last indexing
+- **Removal** Amazon Q Feature dev: Remove approach generation flow
+
+## 1.24.0 2024-09-05
+
+- **Bug Fix** Network errors causing premature SSO logout
+- **Bug Fix** Fix SyntaxError causing premature expiration (edge case)
+- **Bug Fix** Amazon Q Code Transformation: show instructions for finding JDK path on Linux
+- **Bug Fix** UI: 'Start using Amazon Q' may display even if the user is signed in.
+- **Bug Fix** Add getFeature and isEnabled utility methods to FeatureConfigProvider
+- **Feature** Amazon Q /dev: include in progress state agent in code generation
+- **Feature** Reduce workspace CPU indexing time by 50%
+
+## 1.23.0 2024-08-29
+
+- **Bug Fix** Fix bug when undo inline suggestion causes command not found
+- **Bug Fix** Auth: `SyntaxError` causing unexpected SSO logout
+- **Bug Fix** Amazon Q Code Transformation: allow symlinks for JDK path
+- **Bug Fix** Fix bug where text with inline code copied from Amazon Q Chat had new line breaks around the inline code text
+- **Bug Fix** Fix bug with code indentation and nested list formatting in chat response prompt
+- **Bug Fix** Fix bug when disabled commands does not get filtered in quick actions
+- **Bug Fix** Auth: Users may be silently logged out due to network issues when starting the extension.
+- **Feature** Support AB testing
+
+## 1.22.0 2024-08-22
+
+- **Bug Fix** Avoid refreshing code suggestion for paginated response
+- **Bug Fix** Update login logo styling
+- **Bug Fix** Correct indentation when insert Q chat code at cursor position
+- **Feature** Add notification for extended session to IdC users
+- **Feature** Support more programming languages for workspace index
+
+## 1.21.0 2024-08-15
+
+- **Bug Fix** Q feature dev: update file extension list and minor UI fixes
+
+## 1.20.0 2024-08-08
+
+- **Bug Fix** Amazon Q /dev: include a retry option for the same prompt after folder reselection
+- **Bug Fix** Ignore virtual environment when indexing workspace
+- **Feature** Amazon Q Code Transformation: show pro tier users estimated cost of /transform on projects over 100K lines
+- **Feature** Amazon Q Code Transformation: warn user if absolute file paths are found in the pom.xml
+
+## 1.19.0 2024-08-01
+
+- **Bug Fix** Amazon Q Chat: Fixing issue with an incorrect input cursor position in the prompt text box
+- **Bug Fix** Amazon Q Chat: Fixing issue with the max tabs notification not being dismissible.
+- **Bug Fix** Amazon Q Chat: Showing/hiding the scrollbars is now controlled by the OS settings
+- **Bug Fix** Q chat may stop responding after processing Python/Java code
+- **Feature** Amazon q /dev: i18n support for messaging
+
+## 1.18.0 2024-07-29
+
+- **Bug Fix** Security Scan: Fixed an issue scans were not able to succeed on Java projects with .class files
+- **Bug Fix** FileNotFound error causing early SSO expiration
+
+## 1.17.0 2024-07-25
+
+- **Bug Fix** Amazon Q Dev and Transform introduction text formatted incorrectly
+- **Bug Fix** Amazon Q /dev: update error message for code gen timeout and include backfill for error name
+- **Bug Fix** Sign-in page may fail to render in rare circumstances.
+
+## 1.16.0 2024-07-18
+
+- **Bug Fix** Amazon q /dev: include granular error handling for code generation failed state
+- **Bug Fix** Amazon Q Code Transformation: always show build logs from last job run
+- **Bug Fix** Unexpected SSO expiration on Windows due to EPERM
+
+## 1.15.0 2024-07-15
+
+- **Bug Fix** Amazon Q Chat: Fixes a bug when the prompt input exceeds the width of the chat box it's not always wrapped correctly.
+- **Bug Fix** Amazon Q: Corrected a miswording in the Amazon Q: Share Content With AWS setting.
+- **Bug Fix** Amazon Q Chat: Fixes a bug when user input contains 4 or more spaces at the beginning of the line for multiline inputs, that line appears like a code block instead of a paragraph
+
+## 1.14.0 2024-07-11
+
+- **Feature** Amazon Q/dev proactively show code generation iterations
+
+## 1.13.0 2024-07-11
+
+- **Bug Fix** AD/LDAP users may see "uv_os_get_passwd ENOENT" error on startup #5277
+- **Feature** Add support for [Amazon Q Chat Workspace Context](https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/workspace-context.html). Customers can use `@workspace` to ask questions regarding local workspace.
+
+## 1.12.0 2024-07-08
+
+- **Bug Fix** Amazon Q Security Scans: Fixed unnecessary yellow lines appearing in both auto scans and project scans.
+- **Bug Fix** Amazon Q Chat: Fixed prompt input becomes invisible if an html special character is inserted
+- **Bug Fix** Amazon Q Chat: Fixed button font sizes are too big
+- **Bug Fix** Amazon Q Chat: Fixed buttons don't show borders inside a message
+- **Bug Fix** Amazon Q Code Transform: Link UI messages to troubleshooting docs
+- **Bug Fix** Amazon Q /dev command: improve user error messages
+- **Bug Fix** Amazon Q Chat: Fixed button texts are cropped too short
+- **Bug Fix** Amazon Q Chat: Fixed prompt input and selected command horizontal alignment
+- **Bug Fix** Amazon Q Chat: Fixed prompt input becomes invisible when multine text inserted with paste
+- **Feature** Q feature dev: Only use relevant code and related files
+
+## 1.11.0 2024-06-27
+
+- **Bug Fix** Amazon Q Chat: Fix for inline buttons don't have borders
+- **Bug Fix** Amazon Q Chat: Fix for some edge cases when followups appear on top without styles
+- **Bug Fix** Amazon Q Chat: Fix for prompt input removes whole word if it starts with @ character but there is no context selected
+- **Bug Fix** Amazon Q Chat: Fix for prompt input doesn't show multi line content properly after it reaches 10-15 lines
+- **Bug Fix** Amazon Q /dev command: Fix in progress experience for ongoing backend calls
+
 ## 1.10.0 2024-06-21
 
 - **Bug Fix** Security Scan: Fixes an issue where project-scans time out for larger projects.

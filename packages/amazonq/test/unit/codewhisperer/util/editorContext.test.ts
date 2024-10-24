@@ -2,24 +2,31 @@
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-
 import assert from 'assert'
 import * as codewhispererClient from 'aws-core-vscode/codewhisperer'
 import * as EditorContext from 'aws-core-vscode/codewhisperer'
-import { createMockTextEditor, createMockClientRequest, resetCodeWhispererGlobalVariables } from 'aws-core-vscode/test'
+import {
+    createMockTextEditor,
+    createMockClientRequest,
+    resetCodeWhispererGlobalVariables,
+    toTextEditor,
+    createTestWorkspaceFolder,
+    closeAllEditors,
+} from 'aws-core-vscode/test'
 import { globals } from 'aws-core-vscode/shared'
 import { GenerateCompletionsRequest } from 'aws-core-vscode/codewhisperer'
 
 describe('editorContext', function () {
     let telemetryEnabledDefault: boolean
+    let tempFolder: string
 
     beforeEach(async function () {
         await resetCodeWhispererGlobalVariables()
         telemetryEnabledDefault = globals.telemetry.telemetryEnabled
     })
 
-    afterEach(function () {
-        globals.telemetry.telemetryEnabled = telemetryEnabledDefault
+    afterEach(async function () {
+        await globals.telemetry.setTelemetryEnabled(telemetryEnabledDefault)
     })
 
     describe('extractContextForCodeWhisperer', function () {
@@ -66,7 +73,7 @@ describe('editorContext', function () {
             assert.strictEqual(actual, expected)
         })
 
-        it('Should return expected filename for a long filename', function () {
+        it('Should return expected filename for a long filename', async function () {
             const editor = createMockTextEditor('', 'a'.repeat(1500), 'python', 1, 17)
             const actual = EditorContext.getFileName(editor)
             const expected = 'a'.repeat(1024)
@@ -74,7 +81,11 @@ describe('editorContext', function () {
         })
     })
 
-    describe('getfileNameForRequest', function () {
+    describe('getFileRelativePath', function () {
+        this.beforeEach(async function () {
+            tempFolder = (await createTestWorkspaceFolder()).uri.fsPath
+        })
+
         it('Should return a new filename with correct extension given a .ipynb file', function () {
             const languageToExtension = new Map<string, string>([
                 ['python', 'py'],
@@ -86,10 +97,21 @@ describe('editorContext', function () {
 
             languageToExtension.forEach((extension, language) => {
                 const editor = createMockTextEditor('', 'test.ipynb', language, 1, 17)
-                const actual = EditorContext.getFileNameForRequest(editor)
+                const actual = EditorContext.getFileRelativePath(editor)
                 const expected = 'test.' + extension
                 assert.strictEqual(actual, expected)
             })
+        })
+
+        it('Should return relative path', async function () {
+            const editor = await toTextEditor('tttt', 'test.py', tempFolder)
+            const actual = EditorContext.getFileRelativePath(editor)
+            const expected = 'test.py'
+            assert.strictEqual(actual, expected)
+        })
+
+        afterEach(async function () {
+            await closeAllEditors()
         })
     })
 
@@ -136,7 +158,7 @@ describe('editorContext', function () {
         it('Should return expected fields for optOut, nextToken and reference config', async function () {
             const nextToken = 'testToken'
             const optOutPreference = false
-            globals.telemetry.telemetryEnabled = false
+            await globals.telemetry.setTelemetryEnabled(false)
             const editor = createMockTextEditor('import math\ndef two_sum(nums, target):\n', 'test.py', 'python', 1, 17)
             const actual = await EditorContext.buildListRecommendationRequest(editor, nextToken, optOutPreference)
 

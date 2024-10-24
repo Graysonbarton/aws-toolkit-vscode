@@ -3,13 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import assert from 'assert'
+import assert, { fail } from 'assert'
 import * as vscode from 'vscode'
-import * as fs from 'fs-extra'
 import * as sinon from 'sinon'
 import { makeTemporaryToolkitFolder } from '../../../shared/filesystemUtilities'
 import { transformByQState, TransformByQStoppedError } from '../../../codewhisperer/models/model'
-import { resetDebugArtifacts, stopTransformByQ } from '../../../codewhisperer/commands/startTransformByQ'
+import { parseBuildFile, stopTransformByQ } from '../../../codewhisperer/commands/startTransformByQ'
 import { HttpResponse } from 'aws-sdk'
 import * as codeWhisperer from '../../../codewhisperer/client/codewhisperer'
 import * as CodeWhispererConstants from '../../../codewhisperer/models/constants'
@@ -36,6 +35,8 @@ import {
     getOpenProjects,
 } from '../../../codewhisperer/service/transformByQ/transformProjectValidationHandler'
 import { TransformationCandidateProject, ZipManifest } from '../../../codewhisperer/models/model'
+import globals from '../../../shared/extensionGlobals'
+import { fs } from '../../../shared'
 
 describe('transformByQ', function () {
     let tempDir: string
@@ -47,7 +48,7 @@ describe('transformByQ', function () {
 
     afterEach(async function () {
         sinon.restore()
-        await fs.remove(tempDir)
+        await fs.delete(tempDir, { recursive: true })
     })
 
     it('WHEN converting short duration in milliseconds THEN converts correctly', async function () {
@@ -202,6 +203,32 @@ describe('transformByQ', function () {
         assert.deepStrictEqual(actual, expected)
     })
 
+    it(`WHEN zip created THEN manifest.json contains test-compile custom build command`, async function () {
+        const tempFileName = `testfile-${globals.clock.Date.now()}.zip`
+        transformByQState.setProjectPath(tempDir)
+        const transformManifest = new ZipManifest()
+        transformManifest.customBuildCommand = CodeWhispererConstants.skipUnitTestsBuildCommand
+        return zipCode({
+            dependenciesFolder: {
+                path: tempDir,
+                name: tempFileName,
+            },
+            humanInTheLoopFlag: false,
+            modulePath: tempDir,
+            zipManifest: transformManifest,
+        }).then((zipCodeResult) => {
+            const zip = new AdmZip(zipCodeResult.tempFilePath)
+            const manifestEntry = zip.getEntry('manifest.json')
+            if (!manifestEntry) {
+                fail('manifest.json not found in the zip')
+            }
+            const manifestBuffer = manifestEntry.getData()
+            const manifestText = manifestBuffer.toString('utf8')
+            const manifest = JSON.parse(manifestText)
+            assert.strictEqual(manifest.customBuildCommand, CodeWhispererConstants.skipUnitTestsBuildCommand)
+        })
+    })
+
     it(`WHEN zip created THEN dependencies contains no .sha1 or .repositories files`, async function () {
         const m2Folders = [
             'com/groupid1/artifactid1/version1',
@@ -227,15 +254,15 @@ describe('transformByQ', function () {
             'resolver-status.properties',
         ]
 
-        m2Folders.forEach(folder => {
+        for (const folder of m2Folders) {
             const folderPath = path.join(tempDir, folder)
-            fs.mkdirSync(folderPath, { recursive: true })
-            filesToAdd.forEach(file => {
-                fs.writeFileSync(path.join(folderPath, file), 'sample content for the test file')
-            })
-        })
+            await fs.mkdir(folderPath)
+            for (const file of filesToAdd) {
+                await fs.writeFile(path.join(folderPath, file), 'sample content for the test file')
+            }
+        }
 
-        const tempFileName = `testfile-${Date.now()}.zip`
+        const tempFileName = `testfile-${globals.clock.Date.now()}.zip`
         transformByQState.setProjectPath(tempDir)
         return zipCode({
             dependenciesFolder: {
@@ -245,13 +272,13 @@ describe('transformByQ', function () {
             humanInTheLoopFlag: false,
             modulePath: tempDir,
             zipManifest: new ZipManifest(),
-        }).then(zipFile => {
-            const zip = new AdmZip(zipFile)
-            const dependenciesToUpload = zip.getEntries().filter(entry => entry.entryName.startsWith('dependencies'))
+        }).then((zipCodeResult) => {
+            const zip = new AdmZip(zipCodeResult.tempFilePath)
+            const dependenciesToUpload = zip.getEntries().filter((entry) => entry.entryName.startsWith('dependencies'))
             // Each dependency version folder contains each expected file, thus we multiply
             const expectedNumberOfDependencyFiles = m2Folders.length * expectedFilesAfterClean.length
             assert.strictEqual(expectedNumberOfDependencyFiles, dependenciesToUpload.length)
-            dependenciesToUpload.forEach(dependency => {
+            dependenciesToUpload.forEach((dependency) => {
                 assert(expectedFilesAfterClean.includes(dependency.name))
             })
         })
@@ -296,35 +323,22 @@ describe('transformByQ', function () {
         }
         assert.deepStrictEqual(actual, expected)
     })
-})
 
-describe('resetDebugArtifacts', () => {
-    it('should remove the directory containing the pre-build log file if it exists', async () => {
+    it(`WHEN codeTransformBillingText on small project THEN correct string returned`, async function () {
+        const expected =
+            '<p>376 lines of code were submitted for transformation. If you reach the quota for lines of code included in your subscription, you will be charged $0.003 for each additional line of code. You might be charged up to $1.13 for this transformation. To avoid being charged, stop the transformation job before it completes. For more information on pricing and quotas, see [Amazon Q Developer pricing](https://aws.amazon.com/q/developer/pricing/).</p>'
+        const actual = CodeWhispererConstants.codeTransformBillingText(376)
+        assert.strictEqual(actual, expected)
+    })
+
+    it(`WHEN parseBuildFile on pom.xml with absolute path THEN absolute path detected`, async function () {
         const dirPath = await createTestWorkspaceFolder()
-        const preBuildLogFilePath = path.join(dirPath.uri.fsPath, 'DummyLog.log')
-        await toFile('', preBuildLogFilePath)
-        transformByQState.setPreBuildLogFilePath(preBuildLogFilePath)
-
-        await resetDebugArtifacts()
-
-        assert.strictEqual(fs.existsSync(preBuildLogFilePath), false)
-        assert.strictEqual(transformByQState.getPreBuildLogFilePath(), '')
-    })
-
-    it('should not remove any directory if the pre-build log file path is not set', async () => {
-        transformByQState.setPreBuildLogFilePath('')
-
-        await resetDebugArtifacts()
-
-        assert.strictEqual(transformByQState.getPreBuildLogFilePath(), '')
-    })
-
-    it('should not remove any directory if the pre-build log file does not exist', async () => {
-        const preBuildLogFilePath = 'non/existent/path/to/pre-build.log'
-        transformByQState.setPreBuildLogFilePath(preBuildLogFilePath)
-
-        await resetDebugArtifacts()
-
-        assert.strictEqual(transformByQState.getPreBuildLogFilePath(), '')
+        transformByQState.setProjectPath(dirPath.uri.fsPath)
+        const pomPath = path.join(dirPath.uri.fsPath, 'pom.xml')
+        await toFile('<project><properties><path>system/name/here</path></properties></project>', pomPath)
+        const expectedWarning =
+            'I detected 1 potential absolute file path(s) in your pom.xml file: **system/**. Absolute file paths might cause issues when I build your code. Any errors will show up in the build log.'
+        const warningMessage = await parseBuildFile()
+        assert.strictEqual(expectedWarning, warningMessage)
     })
 })

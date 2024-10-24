@@ -9,23 +9,32 @@ import * as path from 'path'
 import sinon from 'sinon'
 import { waitUntil } from '../../../../shared/utilities/timeoutUtils'
 import { ControllerSetup, createController, createSession, generateVirtualMemoryUri } from '../../utils'
-import {
-    CurrentWsFolders,
-    FollowUpTypes,
-    createUri,
-    NewFileInfo,
-    DeletedFileInfo,
-} from '../../../../amazonqFeatureDev/types'
+import { CurrentWsFolders, FollowUpTypes, NewFileInfo, DeletedFileInfo } from '../../../../amazonqFeatureDev/types'
 import { Session } from '../../../../amazonqFeatureDev/session/session'
 import { Prompter } from '../../../../shared/ui/prompter'
 import { assertTelemetry, toFile } from '../../../testUtil'
-import { SelectedFolderNotInWorkspaceFolderError } from '../../../../amazonqFeatureDev/errors'
 import {
-    CodeGenState,
-    PrepareCodeGenState,
-    PrepareRefinementState,
-} from '../../../../amazonqFeatureDev/session/sessionState'
+    CodeIterationLimitError,
+    ContentLengthError,
+    createUserFacingErrorMessage,
+    FeatureDevServiceError,
+    MonthlyConversationLimitError,
+    NoChangeRequiredException,
+    PrepareRepoFailedError,
+    PromptRefusalException,
+    SelectedFolderNotInWorkspaceFolderError,
+    TabIdNotFoundError,
+    UploadCodeError,
+    UploadURLExpired,
+    UserMessageNotFoundError,
+    ZipFileError,
+} from '../../../../amazonqFeatureDev/errors'
+import { CodeGenState, PrepareCodeGenState } from '../../../../amazonqFeatureDev/session/sessionState'
 import { FeatureDevClient } from '../../../../amazonqFeatureDev/client/featureDev'
+import { createAmazonQUri } from '../../../../amazonq/commons/diff'
+import { AuthUtil } from '../../../../codewhisperer'
+import { featureName, messageWithConversationId } from '../../../../amazonqFeatureDev'
+import { i18n } from '../../../../shared/i18n-helper'
 
 let mockGetCodeGeneration: sinon.SinonStub
 describe('Controller', () => {
@@ -77,6 +86,12 @@ describe('Controller', () => {
     beforeEach(async () => {
         controllerSetup = await createController()
         session = await createSession({ messenger: controllerSetup.messenger, conversationID, tabID, uploadID })
+
+        sinon.stub(AuthUtil.instance, 'getChatAuthState').resolves({
+            codewhispererCore: 'connected',
+            codewhispererChat: 'connected',
+            amazonQ: 'connected',
+        })
     })
 
     afterEach(() => {
@@ -102,8 +117,8 @@ describe('Controller', () => {
             assert.strictEqual(
                 executedDiff.calledWith(
                     'vscode.diff',
-                    createUri('empty', tabID),
-                    createUri(path.join(uploadID, 'src', 'mynewfile.js'), tabID)
+                    createAmazonQUri('empty', tabID),
+                    createAmazonQUri(path.join(uploadID, 'src', 'mynewfile.js'), tabID)
                 ),
                 true
             )
@@ -120,7 +135,7 @@ describe('Controller', () => {
                 executedDiff.calledWith(
                     'vscode.diff',
                     vscode.Uri.file(newFileLocation),
-                    createUri(path.join(uploadID, 'mynewfile.js'), tabID)
+                    createAmazonQUri(path.join(uploadID, 'mynewfile.js'), tabID)
                 ),
                 true
             )
@@ -137,7 +152,7 @@ describe('Controller', () => {
                 executedDiff.calledWith(
                     'vscode.diff',
                     vscode.Uri.file(newFileLocation),
-                    createUri(path.join(uploadID, 'src', 'mynewfile.js'), tabID)
+                    createAmazonQUri(path.join(uploadID, 'src', 'mynewfile.js'), tabID)
                 ),
                 true
             )
@@ -156,7 +171,7 @@ describe('Controller', () => {
                 executedDiff.calledWith(
                     'vscode.diff',
                     vscode.Uri.file(newFileLocation),
-                    createUri(path.join(uploadID, 'foo', 'fi', 'mynewfile.js'), tabID)
+                    createAmazonQUri(path.join(uploadID, 'foo', 'fi', 'mynewfile.js'), tabID)
                 ),
                 true
             )
@@ -193,6 +208,7 @@ describe('Controller', () => {
                     tabID,
                     type: 'answer',
                     message: new SelectedFolderNotInWorkspaceFolderError().message,
+                    canBeVoted: true,
                 }),
                 true
             )
@@ -207,61 +223,12 @@ describe('Controller', () => {
         })
 
         it('accepts valid source folders under a workspace root', async () => {
-            const controllerSetup = await createController()
             sinon.stub(controllerSetup.sessionStorage, 'getSession').resolves(session)
             sinon.stub(vscode.workspace, 'getWorkspaceFolder').returns(controllerSetup.workspaceFolder)
             const expectedSourceRoot = path.join(controllerSetup.workspaceFolder.uri.fsPath, 'src')
             const modifiedSession = await modifyDefaultSourceFolder(expectedSourceRoot)
             assert.strictEqual(modifiedSession.config.workspaceRoots.length, 1)
             assert.strictEqual(modifiedSession.config.workspaceRoots[0], expectedSourceRoot)
-        })
-    })
-
-    describe('processChatItemVotedMessage', () => {
-        async function processChatItemVotedMessage(vote: 'upvote' | 'downvote') {
-            const initialState = new PrepareRefinementState(
-                {
-                    conversationId: conversationID,
-                    proxyClient: new FeatureDevClient(),
-                    workspaceRoots: [''],
-                    workspaceFolders: [controllerSetup.workspaceFolder],
-                },
-                '',
-                tabID
-            )
-            const newSession = await createSession({
-                messenger: controllerSetup.messenger,
-                sessionState: initialState,
-                conversationID,
-                tabID,
-                uploadID,
-            })
-            const getSessionStub = sinon.stub(controllerSetup.sessionStorage, 'getSession').resolves(newSession)
-            controllerSetup.emitters.processChatItemVotedMessage.fire({
-                tabID,
-                messageID: '',
-                vote,
-            })
-
-            // Wait until the controller has time to process the event
-            await waitUntil(() => {
-                return Promise.resolve(getSessionStub.callCount > 0)
-            }, {})
-        }
-
-        it('incoming upvoted message sends telemetry', async () => {
-            await processChatItemVotedMessage('upvote')
-
-            assertTelemetry('amazonq_approachThumbsUp', { amazonqConversationId: conversationID, result: 'Succeeded' })
-        })
-
-        it('incoming downvoted message sends telemetry', async () => {
-            await processChatItemVotedMessage('downvote')
-
-            assertTelemetry('amazonq_approachThumbsDown', {
-                amazonqConversationId: conversationID,
-                result: 'Succeeded',
-            })
         })
     })
 
@@ -308,17 +275,8 @@ describe('Controller', () => {
                 uploadId: uploadID,
                 workspaceFolders,
             }
-            const testApproach = 'test-approach'
 
-            const codeGenState = new CodeGenState(
-                testConfig,
-                testApproach,
-                getFilePaths(controllerSetup),
-                [],
-                [],
-                tabID,
-                0
-            )
+            const codeGenState = new CodeGenState(testConfig, getFilePaths(controllerSetup), [], [], tabID, 0, {})
             const newSession = await createSession({
                 messenger: controllerSetup.messenger,
                 sessionState: codeGenState,
@@ -354,7 +312,7 @@ describe('Controller', () => {
             const getSessionStub = sinon.stub(controllerSetup.sessionStorage, 'getSession').resolves(session)
 
             const rejectFile = await fileClicked(getSessionStub, 'reject-change', filePath)
-            assert.strictEqual(rejectFile.state.filePaths?.find(i => i.relativePath === filePath)?.rejected, true)
+            assert.strictEqual(rejectFile.state.filePaths?.find((i) => i.relativePath === filePath)?.rejected, true)
         })
 
         it('clicking the "Reject File" button and then "Revert Reject File", updates the file state to "rejected: false"', async () => {
@@ -364,7 +322,10 @@ describe('Controller', () => {
 
             await fileClicked(getSessionStub, 'reject-change', filePath)
             const revertRejection = await fileClicked(getSessionStub, 'revert-rejection', filePath)
-            assert.strictEqual(revertRejection.state.filePaths?.find(i => i.relativePath === filePath)?.rejected, false)
+            assert.strictEqual(
+                revertRejection.state.filePaths?.find((i) => i.relativePath === filePath)?.rejected,
+                false
+            )
         })
     })
 
@@ -379,7 +340,6 @@ describe('Controller', () => {
                         workspaceFolders: [controllerSetup.workspaceFolder],
                         uploadId: uploadID,
                     },
-                    '',
                     getFilePaths(controllerSetup),
                     getDeletedFiles(),
                     [],
@@ -418,6 +378,145 @@ describe('Controller', () => {
                 enabled: true,
                 result: 'Succeeded',
             })
+        })
+    })
+
+    describe('processUserChatMessage', function () {
+        async function fireChatMessage() {
+            const getSessionStub = sinon.stub(controllerSetup.sessionStorage, 'getSession').resolves(session)
+
+            controllerSetup.emitters.processHumanChatMessage.fire({
+                tabID,
+                conversationID,
+                message: 'test message',
+            })
+
+            // Wait until the controller has time to process the event
+            await waitUntil(() => {
+                return Promise.resolve(getSessionStub.callCount > 0)
+            }, {})
+        }
+
+        describe('processErrorChatMessage', function () {
+            const runs = [
+                { name: 'ContentLengthError', error: new ContentLengthError() },
+                {
+                    name: 'MonthlyConversationLimitError',
+                    error: new MonthlyConversationLimitError('Service Quota Exceeded'),
+                },
+                {
+                    name: 'FeatureDevServiceError',
+                    error: new FeatureDevServiceError(
+                        i18n('AWS.amazonq.featureDev.error.codeGen.default'),
+                        'GuardrailsException'
+                    ),
+                },
+                { name: 'UploadCodeError', error: new UploadCodeError('403: Forbiden') },
+                { name: 'UserMessageNotFoundError', error: new UserMessageNotFoundError() },
+                { name: 'TabIdNotFoundError', error: new TabIdNotFoundError() },
+                { name: 'PrepareRepoFailedError', error: new PrepareRepoFailedError() },
+                { name: 'PromptRefusalException', error: new PromptRefusalException() },
+                { name: 'ZipFileError', error: new ZipFileError() },
+                { name: 'CodeIterationLimitError', error: new CodeIterationLimitError() },
+                { name: 'UploadURLExpired', error: new UploadURLExpired() },
+                { name: 'NoChangeRequiredException', error: new NoChangeRequiredException() },
+                { name: 'default', error: new Error() },
+            ]
+
+            function createTestErrorMessage(message: string) {
+                return createUserFacingErrorMessage(`${featureName} request failed: ${message}`)
+            }
+
+            async function verifyException(error: Error) {
+                sinon.stub(session, 'preloader').throws(error)
+                const sendAnswerSpy = sinon.stub(controllerSetup.messenger, 'sendAnswer')
+                const sendErrorMessageSpy = sinon.stub(controllerSetup.messenger, 'sendErrorMessage')
+                const sendMonthlyLimitErrorSpy = sinon.stub(controllerSetup.messenger, 'sendMonthlyLimitError')
+
+                await fireChatMessage()
+
+                switch (error.constructor.name) {
+                    case ContentLengthError.name:
+                        assert.ok(
+                            sendAnswerSpy.calledWith({
+                                type: 'answer',
+                                tabID,
+                                message: error.message + messageWithConversationId(session?.conversationIdUnsafe),
+                                canBeVoted: true,
+                            })
+                        )
+                        break
+                    case MonthlyConversationLimitError.name:
+                        assert.ok(sendMonthlyLimitErrorSpy.calledWith(tabID))
+                        break
+                    case FeatureDevServiceError.name:
+                    case UploadCodeError.name:
+                    case UserMessageNotFoundError.name:
+                    case TabIdNotFoundError.name:
+                    case PrepareRepoFailedError.name:
+                        assert.ok(
+                            sendErrorMessageSpy.calledWith(
+                                createTestErrorMessage(error.message),
+                                tabID,
+                                session?.retries,
+                                session?.conversationIdUnsafe
+                            )
+                        )
+                        break
+                    case PromptRefusalException.name:
+                    case ZipFileError.name:
+                        assert.ok(
+                            sendErrorMessageSpy.calledWith(
+                                createTestErrorMessage(error.message),
+                                tabID,
+                                0,
+                                session?.conversationIdUnsafe,
+                                true
+                            )
+                        )
+                        break
+                    case NoChangeRequiredException.name:
+                    case CodeIterationLimitError.name:
+                    case UploadURLExpired.name:
+                        assert.ok(
+                            sendAnswerSpy.calledWith({
+                                type: 'answer',
+                                tabID,
+                                message: error.message,
+                                canBeVoted: true,
+                            })
+                        )
+                        break
+                    default:
+                        assert.ok(
+                            sendErrorMessageSpy.calledWith(
+                                i18n('AWS.amazonq.featureDev.error.codeGen.default'),
+                                tabID,
+                                session?.retries,
+                                session?.conversationIdUnsafe,
+                                true
+                            )
+                        )
+                        break
+                }
+            }
+
+            runs.forEach((run) => {
+                it(`should handle ${run.name}`, async function () {
+                    await verifyException(run.error)
+                })
+            })
+        })
+    })
+
+    describe('stopResponse', () => {
+        it('should emit ui_click telemetry with elementId amazonq_stopCodeGeneration', async () => {
+            const getSessionStub = sinon.stub(controllerSetup.sessionStorage, 'getSession').resolves(session)
+            controllerSetup.emitters.stopResponse.fire({ tabID, conversationID })
+            await waitUntil(() => {
+                return Promise.resolve(getSessionStub.callCount > 0)
+            }, {})
+            assertTelemetry('ui_click', { elementId: 'amazonq_stopCodeGeneration' })
         })
     })
 })

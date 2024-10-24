@@ -6,15 +6,9 @@
 import assert from 'assert'
 import * as sinon from 'sinon'
 import { assertTelemetryCurried } from 'aws-core-vscode/test'
-import {
-    AuthUtil,
-    CodeWhispererTracker,
-    userGroupKey,
-    UserGroup,
-    CodeWhispererUserGroupSettings,
-} from 'aws-core-vscode/codewhisperer'
+import { AuthUtil, CodeWhispererTracker } from 'aws-core-vscode/codewhisperer'
 import { resetCodeWhispererGlobalVariables, createAcceptedSuggestionEntry } from 'aws-core-vscode/test'
-import { globals, extensionVersion } from 'aws-core-vscode/shared'
+import { globals } from 'aws-core-vscode/shared'
 
 describe('codewhispererTracker', function () {
     describe('enqueue', function () {
@@ -34,13 +28,13 @@ describe('codewhispererTracker', function () {
             assert.ok(!pushSpy.neverCalledWith(suggestion))
         })
 
-        it('Should not enque when telemetry is disabled', function () {
-            globals.telemetry.telemetryEnabled = false
+        it('Should not enque when telemetry is disabled', async function () {
+            await globals.telemetry.setTelemetryEnabled(false)
             const suggestion = createAcceptedSuggestionEntry()
             const pushSpy = sinon.spy(Array.prototype, 'push')
             CodeWhispererTracker.getTracker().enqueue(suggestion)
             assert.ok(pushSpy.neverCalledWith(suggestion))
-            globals.telemetry.telemetryEnabled = true
+            await globals.telemetry.setTelemetryEnabled(true)
         })
     })
 
@@ -67,11 +61,11 @@ describe('codewhispererTracker', function () {
         })
 
         it('Should skip if telemetry is disabled', async function () {
-            globals.telemetry.telemetryEnabled = false
+            await globals.telemetry.setTelemetryEnabled(false)
             const getTimeSpy = sinon.spy(Date.prototype, 'getTime')
             await CodeWhispererTracker.getTracker().flush()
             assert.ok(!getTimeSpy.called)
-            globals.telemetry.telemetryEnabled = true
+            await globals.telemetry.setTelemetryEnabled(true)
         })
     })
 
@@ -87,20 +81,7 @@ describe('codewhispererTracker', function () {
     })
 
     describe('emitTelemetryOnSuggestion', function () {
-        beforeEach(function () {
-            CodeWhispererUserGroupSettings.instance.reset()
-        })
-
-        afterEach(function () {
-            CodeWhispererUserGroupSettings.instance.reset()
-        })
-
         it('Should call recordCodewhispererUserModification with suggestion event', async function () {
-            await globals.context.globalState.update(userGroupKey, {
-                group: UserGroup.CrossFile,
-                version: extensionVersion,
-            })
-
             const testStartUrl = 'testStartUrl'
             sinon.stub(AuthUtil.instance, 'startUrl').value(testStartUrl)
             const suggestion = createAcceptedSuggestionEntry()
@@ -115,7 +96,8 @@ describe('codewhispererTracker', function () {
                 codewhispererCompletionType: 'Line',
                 codewhispererLanguage: 'java',
                 credentialStartUrl: testStartUrl,
-                codewhispererUserGroup: 'CrossFile',
+                codewhispererCharactersAccepted: suggestion.originalString.length,
+                codewhispererCharactersModified: 0,
             })
         })
     })

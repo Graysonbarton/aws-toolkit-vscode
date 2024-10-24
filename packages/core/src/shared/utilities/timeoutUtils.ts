@@ -101,12 +101,14 @@ export class Timeout {
             globals.clock.clearTimeout(this._timerTimeout)
             this._timerTimeout = this.createTimeout()
         } else {
-            // These will not align, but we don't have visibility into a NodeJS.Timeout
-            // so remainingtime will be approximate. Timers are approximate anyway and are
-            // not highly accurate in when they fire.
-            this._endTime = globals.clock.Date.now() + this._timeoutLength
+            // This is a node timeout instance, which has refresh built in
             this._timerTimeout = this._timerTimeout.refresh()
         }
+
+        // These will not align, but we don't have visibility into a NodeJS.Timeout
+        // so remainingtime will be approximate. Timers are approximate anyway and are
+        // not highly accurate in when they fire.
+        this._endTime = globals.clock.Date.now() + this._timeoutLength
     }
 
     /**
@@ -182,6 +184,34 @@ export class Timeout {
     }
 }
 
+export class Interval {
+    private _setCompleted: (() => void) | undefined
+    private _nextCompletion: Promise<void>
+    private ref: NodeJS.Timer | number | undefined
+
+    constructor(intervalMillis: number, onCompletion: () => Promise<void>) {
+        this._nextCompletion = new Promise<void>((resolve) => {
+            this._setCompleted = () => resolve()
+        })
+        this.ref = globals.clock.setInterval(async () => {
+            await onCompletion()
+            this._setCompleted!()
+            this._nextCompletion = new Promise<void>((resolve) => {
+                this._setCompleted = () => resolve()
+            })
+        }, intervalMillis)
+    }
+
+    /** Allows to wait for the next interval to finish running */
+    public async nextCompletion() {
+        await this._nextCompletion
+    }
+
+    public dispose() {
+        globals.clock.clearInterval(this.ref)
+    }
+}
+
 interface WaitUntilOptions {
     /** Timeout in ms (default: 5000) */
     readonly timeout?: number
@@ -207,7 +237,7 @@ export async function waitUntil<T>(fn: () => Promise<T>, options: WaitUntilOptio
 
         // Needed in case a caller uses a 0 timeout (function is only called once)
         if (opt.timeout > 0) {
-            result = await Promise.race([fn(), new Promise<T>(r => globals.clock.setTimeout(r, opt.timeout))])
+            result = await Promise.race([fn(), new Promise<T>((r) => globals.clock.setTimeout(r, opt.timeout))])
         } else {
             result = await fn()
         }
@@ -257,7 +287,7 @@ export async function waitTimeout<T, R = void, B extends boolean = true>(
     }
 
     const result = await Promise.race([promise, timeout.promisify()])
-        .catch(e => (e instanceof Error ? e : new Error(`unknown error: ${e}`)))
+        .catch((e) => (e instanceof Error ? e : new Error(`unknown error: ${e}`)))
         .finally(() => {
             if ((opt.completeTimeout ?? true) === true) {
                 timeout.dispose()
@@ -288,5 +318,5 @@ export async function waitTimeout<T, R = void, B extends boolean = true>(
  */
 export function sleep(duration: number = 0): Promise<void> {
     const schedule = globals?.clock?.setTimeout ?? setTimeout
-    return new Promise(r => schedule(r, Math.max(duration, 0)))
+    return new Promise((r) => schedule(r, Math.max(duration, 0)))
 }

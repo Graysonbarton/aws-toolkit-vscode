@@ -38,7 +38,6 @@ import globals from '../../shared/extensionGlobals'
 import { noSuggestions, updateInlineLockKey } from '../models/constants'
 import AsyncLock from 'async-lock'
 import { AuthUtil } from '../util/authUtil'
-import { CodeWhispererUserGroupSettings } from '../util/userGroupUtil'
 import { CWInlineCompletionItemProvider } from './inlineCompletionItemProvider'
 import { application } from '../util/codeWhispererApplication'
 import { openUrl } from '../../shared/utilities/vsCodeUtils'
@@ -59,8 +58,14 @@ const nextCommand = Commands.declare('editor.action.inlineSuggest.showNext', () 
 })
 
 const rejectCommand = Commands.declare('aws.amazonq.rejectCodeSuggestion', () => async () => {
-    RecommendationHandler.instance.reportUserDecisions(-1)
+    telemetry.record({
+        traceId: TelemetryHelper.instance.traceId,
+    })
 
+    if (!isCloud9('any')) {
+        await vscode.commands.executeCommand('editor.action.inlineSuggest.hide')
+    }
+    RecommendationHandler.instance.reportUserDecisions(-1)
     await Commands.tryExecute('aws.amazonq.refreshAnnotation')
 })
 
@@ -99,7 +104,7 @@ export class RecommendationHandler {
     }
 
     isValidResponse(): boolean {
-        return session.recommendations.some(r => r.content.trim() !== '')
+        return session.recommendations.some((r) => r.content.trim() !== '')
     }
 
     async getServerResponse(
@@ -251,7 +256,7 @@ export class RecommendationHandler {
             sessionId = resp?.$response?.httpResponse?.headers['x-amzn-sessionid']
             TelemetryHelper.instance.setFirstResponseRequestId(requestId)
             if (page === 0) {
-                TelemetryHelper.instance.setTimeToFirstRecommendation(performance.now())
+                session.setTimeToFirstRecommendation(performance.now())
             }
             if (nextToken === '') {
                 TelemetryHelper.instance.setAllPaginationEndTime()
@@ -275,7 +280,7 @@ export class RecommendationHandler {
                     getLogger().error('amazonq inline-suggest: AccessDeniedException : %s', (error as Error).message)
                     void vscode.window
                         .showErrorMessage(`CodeWhisperer: ${error?.message}`, CodeWhispererConstants.settingsLearnMore)
-                        .then(async resp => {
+                        .then(async (resp) => {
                             if (resp === CodeWhispererConstants.settingsLearnMore) {
                                 void openUrl(vscode.Uri.parse(CodeWhispererConstants.learnMoreUri))
                             }
@@ -412,7 +417,7 @@ export class RecommendationHandler {
     }
 
     hasAtLeastOneValidSuggestion(typedPrefix: string): boolean {
-        return session.recommendations.some(r => r.content.trim() !== '' && r.content.startsWith(typedPrefix))
+        return session.recommendations.some((r) => r.content.trim() !== '' && r.content.startsWith(typedPrefix))
     }
 
     cancelPaginatedRequest() {
@@ -455,7 +460,6 @@ export class RecommendationHandler {
             this.clearRecommendations()
             this.disposeInlineCompletion()
             await vscode.commands.executeCommand('aws.amazonq.refreshStatusBar')
-            this.disposeCommandOverrides()
             // fix a regression that requires user to hit Esc twice to clear inline ghost text
             // because disposing a provider does not clear the UX
             if (isVscHavingRegressionInlineCompletionApi()) {
@@ -493,7 +497,7 @@ export class RecommendationHandler {
         if (isCloud9('any')) {
             this.clearRecommendations()
         } else if (isInlineCompletionEnabled()) {
-            this.clearInlineCompletionStates().catch(e => {
+            this.clearInlineCompletionStates().catch((e) => {
                 getLogger().error('clearInlineCompletionStates failed: %s', (e as Error).message)
             })
         }
@@ -656,9 +660,7 @@ export class RecommendationHandler {
             return
         }
         if (this.isSuggestionVisible()) {
-            // to force refresh the visual cue so that the total recommendation count can be updated
-            // const index = this.inlineCompletionProvider?.getActiveItemIndex
-            await this.showRecommendation(0, false)
+            // do not force refresh the tooltip to avoid suggestion "flashing"
             return
         }
         if (
@@ -670,8 +672,6 @@ export class RecommendationHandler {
             })
             this.reportUserDecisions(-1)
         } else if (session.recommendations.length > 0) {
-            this.subscribeSuggestionCommands()
-            // await this.startRejectionTimer(editor)
             await this.showRecommendation(0, true)
         }
     }
@@ -701,7 +701,6 @@ export class RecommendationHandler {
                 duration: performance.now() - this.lastInvocationTime,
                 passive: true,
                 credentialStartUrl: AuthUtil.instance.startUrl,
-                codewhispererUserGroup: CodeWhispererUserGroupSettings.getUserGroup().toString(),
                 result: 'Succeeded',
             })
         }

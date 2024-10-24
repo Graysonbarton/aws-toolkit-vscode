@@ -157,17 +157,6 @@ export default defineComponent({
     width: 100%;
 }
 
-#reauthenticate-container[data-app='AMAZONQ'] {
-    border-radius: 11px;
-    background: rgba(30, 30, 30, 0.8);
-    padding: 15px;
-    width: 70%;
-}
-
-.vscode-light .auth-container[data-app='AMAZONQ'] {
-    background: rgba(255, 255, 255, 1);
-}
-
 /* Immediate children */
 #reauthenticate-container > * {
     margin-bottom: 2rem;
@@ -180,12 +169,14 @@ export default defineComponent({
     justify-content: space-between;
     /** The overall height of the container, then spacing is automatic between child elements */
     height: 7rem;
+    text-align: center;
 }
 
 #content-container > * {
     display: flex;
     flex-direction: column;
     align-items: center;
+    text-align: center;
 }
 
 #icon-container {
@@ -214,6 +205,7 @@ button#reauthenticate {
     padding: 0.3rem;
     width: 80%;
     user-select: none;
+    max-width: 260px;
 }
 
 button#signout {
@@ -234,6 +226,11 @@ button#cancel {
     font-weight: bold;
     margin-top: 15px;
     cursor: pointer;
+}
+
+body.vscode-high-contrast:not(body.vscode-high-contrast-light) button#reauthenticate {
+    background-color: white;
+    color: black;
 }
 
 #title {

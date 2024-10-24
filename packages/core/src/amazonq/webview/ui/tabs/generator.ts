@@ -30,9 +30,20 @@ export class TabDataGenerator {
         const tabData: MynahUIDataModel = {
             tabTitle: taskName ?? TabTypeDataMap[tabType].title,
             promptInputInfo:
-                'Use of Amazon Q is subject to the [AWS Responsible AI Policy](https://aws.amazon.com/machine-learning/responsible-ai/policy/).',
+                'Amazon Q Developer uses generative AI. You may need to verify responses. See the [AWS Responsible AI Policy](https://aws.amazon.com/machine-learning/responsible-ai/policy/).',
             quickActionCommands: this.quickActionsGenerator.generateForTab(tabType),
             promptInputPlaceholder: TabTypeDataMap[tabType].placeholder,
+            contextCommands: [
+                {
+                    groupName: 'Mention code',
+                    commands: [
+                        {
+                            command: '@workspace',
+                            description: '(BETA) Reference all code in workspace.',
+                        },
+                    ],
+                },
+            ],
             chatItems: needWelcomeMessages
                 ? [
                       {

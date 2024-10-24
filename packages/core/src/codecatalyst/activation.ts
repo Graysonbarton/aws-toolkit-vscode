@@ -25,8 +25,10 @@ import { getLogger } from '../shared/logger/logger'
 import { DevEnvActivityStarter } from './devEnv'
 import { learnMoreCommand, onboardCommand, reauth } from './explorer'
 import { isInDevEnv } from '../shared/vscode/env'
-import { hasScopes, scopesCodeWhispererCore } from '../auth/connection'
+import { hasScopes, scopesCodeWhispererCore, getTelemetryMetadataForConn } from '../auth/connection'
 import { SessionSeparationPrompt } from '../auth/auth'
+import { telemetry } from '../shared/telemetry/telemetry'
+import { asStringifiedStack } from '../shared/telemetry/spans'
 
 const localize = nls.loadMessageBundle()
 
@@ -50,13 +52,28 @@ export async function activate(ctx: ExtContext): Promise<void> {
     // Note: credentials on disk in the dev env cannot have Q scopes, so it will never be forgotten.
     // TODO: Remove after some time?
     if (authProvider.isConnected() && hasScopes(authProvider.activeConnection!, scopesCodeWhispererCore)) {
-        await authProvider.secondaryAuth.forgetConnection()
-        await SessionSeparationPrompt.instance.showForCommand('aws.codecatalyst.manageConnections')
+        await telemetry.function_call.run(
+            async () => {
+                await telemetry.auth_modifyConnection.run(async () => {
+                    const conn = authProvider.activeConnection
+                    telemetry.record({
+                        action: 'forget',
+                        source: asStringifiedStack(telemetry.getFunctionStack()),
+                        connectionState: conn ? authProvider.auth.getConnectionState(conn) : undefined,
+                        ...(await getTelemetryMetadataForConn(conn)),
+                    })
+
+                    await authProvider.secondaryAuth.forgetConnection()
+                    await SessionSeparationPrompt.instance.showForCommand('aws.codecatalyst.manageConnections')
+                })
+            },
+            { emit: false, functionId: { name: 'activate', class: 'CodeCatalyst' } }
+        )
     }
 
     ctx.extensionContext.subscriptions.push(
         uriHandlers.register(ctx.uriHandler, CodeCatalystCommands.declared),
-        ...Object.values(CodeCatalystCommands.declared).map(c => c.register(commands)),
+        ...Object.values(CodeCatalystCommands.declared).map((c) => c.register(commands)),
         codecatalystConnectionsCmd.register(),
         Commands.register('aws.codecatalyst.signout', () => {
             return authProvider.secondaryAuth.deleteConnection()
@@ -64,7 +81,7 @@ export async function activate(ctx: ExtContext): Promise<void> {
     )
 
     if (!isCloud9()) {
-        await GitExtension.instance.registerRemoteSourceProvider(remoteSourceProvider).then(disposable => {
+        await GitExtension.instance.registerRemoteSourceProvider(remoteSourceProvider).then((disposable) => {
             ctx.extensionContext.subscriptions.push(disposable)
         })
 
@@ -72,16 +89,16 @@ export async function activate(ctx: ExtContext): Promise<void> {
             .registerCredentialsProvider({
                 getCredentials(uri: vscode.Uri) {
                     if (uri.authority.endsWith(getCodeCatalystConfig().gitHostname)) {
-                        return commands.withClient(client => authProvider.getCredentialsForGit(client))
+                        return commands.withClient((client) => authProvider.getCredentialsForGit(client))
                     }
                 },
             })
-            .then(disposable => ctx.extensionContext.subscriptions.push(disposable))
+            .then((disposable) => ctx.extensionContext.subscriptions.push(disposable))
 
         watchRestartingDevEnvs(ctx, authProvider)
     }
 
-    const thisDevenv = (await getThisDevEnv(authProvider))?.unwrapOrElse(err => {
+    const thisDevenv = (await getThisDevEnv(authProvider))?.unwrapOrElse((err) => {
         getLogger().error('codecatalyst: failed to get current Dev Enviroment: %s', err)
         return undefined
     })
@@ -118,7 +135,7 @@ export async function activate(ctx: ExtContext): Promise<void> {
                 getIdeProperties().company
             )
             const openDevEnvSettings = localize('AWS.codecatalyst.openDevEnvSettings', 'Open Dev Environment Settings')
-            void vscode.window.showInformationMessage(message, dontShow, openDevEnvSettings).then(async selection => {
+            void vscode.window.showInformationMessage(message, dontShow, openDevEnvSettings).then(async (selection) => {
                 if (selection === dontShow) {
                     await settings.disablePrompt('remoteConnected')
                 } else if (selection === openDevEnvSettings) {
@@ -150,7 +167,7 @@ async function showReadmeFileOnFirstLoad(workspaceState: vscode.ExtensionContext
     const readmePath = `README.md`
 
     // Find readme file in workspace
-    const readmeUri = await vscode.workspace.findFiles(readmePath).then(files => {
+    const readmeUri = await vscode.workspace.findFiles(readmePath).then((files) => {
         if (files.length === 0) {
             return undefined
         }

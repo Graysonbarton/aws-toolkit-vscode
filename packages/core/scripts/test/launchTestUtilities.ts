@@ -10,7 +10,6 @@ import { join, resolve } from 'path'
 import { runTests } from '@vscode/test-electron'
 import { VSCODE_EXTENSION_ID } from '../../src/shared/extensions'
 import { TestOptions } from '@vscode/test-electron/out/runTest'
-import { defaultCachePath } from '@vscode/test-electron/out/download'
 
 const envvarVscodeTestVersion = 'VSCODE_TEST_VERSION'
 
@@ -19,7 +18,8 @@ const minimum = 'minimum'
 
 const disableWorkspaceTrust = '--disable-workspace-trust'
 
-type SuiteName = 'integration' | 'e2e' | 'unit' | 'web'
+const suiteNames = ['integration', 'e2e', 'unit', 'web'] as const
+export type SuiteName = (typeof suiteNames)[number]
 
 /**
  * This is the generalized method that is used by different test suites (unit, integration, ...) in CI to
@@ -36,6 +36,10 @@ export async function runToolkitTests(
     env?: Record<string, string>
 ) {
     try {
+        if (!suiteNames.includes(suite)) {
+            throw new Error(`Invalid suite name: '${suite}'. Must be one of: ${suiteNames.join(',')}`)
+        }
+
         console.log(`Running ${suite} test suite...`)
 
         const args = await getVSCodeCliArgs({
@@ -146,7 +150,7 @@ async function setupVSCodeTestInstance(suite: SuiteName): Promise<string> {
     const downloadOptions = {
         platform,
         version: vsCodeVersion,
-        cachePath: process.env.AWS_TOOLKIT_TEST_CACHE_DIR ?? defaultCachePath,
+        cachePath: process.env.AWS_TOOLKIT_TEST_CACHE_DIR ?? '../../.vscode-test',
     }
 
     const vsCodeExecutablePath = await downloadAndUnzipVSCode(downloadOptions)
@@ -173,18 +177,21 @@ async function invokeVSCodeCli(vsCodeExecutablePath: string, args: string[]): Pr
     // Workaround: set --user-data-dir to avoid this error in CI:
     // "You are trying to start Visual Studio Code as a super user …"
     if (process.env.AWS_TOOLKIT_TEST_USER_DIR) {
-        cmdArgs = cmdArgs.filter(a => !a.startsWith('--user-data-dir='))
+        cmdArgs = cmdArgs.filter((a) => !a.startsWith('--user-data-dir='))
         cmdArgs.push(`--user-data-dir=${process.env.AWS_TOOLKIT_TEST_USER_DIR}`)
     }
 
     console.log(`Invoking vscode CLI command:\n    "${cli}" ${JSON.stringify(cmdArgs)}`)
+    // Shell option must be true on windows to avoid security error: https://nodejs.org/en/blog/vulnerability/april-2024-security-releases-2
     const spawnResult = proc.spawnSync(cli, cmdArgs, {
         encoding: 'utf-8',
         stdio: 'pipe',
+        shell: process.platform === 'win32',
     })
 
     if (spawnResult.status !== 0) {
         console.log('output: %s', spawnResult.output)
+        console.log('error: %O', spawnResult.error)
         throw new Error(`VS Code CLI command failed (exit-code: ${spawnResult.status}): ${cli} ${cmdArgs}`)
     }
 

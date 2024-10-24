@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import * as fs from 'fs'
+import * as fs from 'fs' // eslint-disable-line no-restricted-imports
 import { getLogger, Logger } from '../../../shared/logger'
 
 /**
@@ -68,7 +68,7 @@ export function toUnescapedAslJsonString(
 
     const definitionStringWithPlaceholders: any[] = escapedAslJsonStr['Fn::Join'][1]
     const definitionStringSegments: string[] = definitionStringWithPlaceholders.filter(
-        segment => typeof segment === 'string'
+        (segment) => typeof segment === 'string'
     )
     return definitionStringSegments.join('')
 }

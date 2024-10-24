@@ -10,8 +10,7 @@ import { isTextEditor } from '../../shared/utilities/editorUtilities'
 import { cancellableDebounce } from '../../shared/utilities/functionUtils'
 import { subscribeOnce } from '../../shared/utilities/vsCodeUtils'
 import { RecommendationService } from '../service/recommendationService'
-import { set } from '../util/commonUtil'
-import { AnnotationChangeSource, autoTriggerEnabledKey, inlinehintKey, inlinehintWipKey } from '../models/constants'
+import { AnnotationChangeSource, inlinehintKey } from '../models/constants'
 import globals from '../../shared/extensionGlobals'
 import { Container } from '../service/serviceContainer'
 import { telemetry } from '../../shared/telemetry/telemetry'
@@ -20,6 +19,8 @@ import { Commands } from '../../shared/vscode/commands2'
 import { session } from '../util/codeWhispererSession'
 import { RecommendationHandler } from '../service/recommendationHandler'
 import { runtimeLanguageContext } from '../util/runtimeLanguageContext'
+import { setContext } from '../../shared'
+import { TelemetryHelper } from '../util/telemetryHelper'
 
 const case3TimeWindow = 30000 // 30 seconds
 
@@ -205,8 +206,8 @@ export class EndState implements AnnotationState {
  *   -- new users who has not seen tutorial
  *   -- new users who has seen tutorial
  *
- * "existing users" should have the context key "autoTriggerEnabledKey"
- * "new users who has seen tutorial" should have the context key "inlineKey" and "autoTriggerEnabledKey"
+ * "existing users" should have the context key "CODEWHISPERER_AUTO_TRIGGER_ENABLED"
+ * "new users who has seen tutorial" should have the context key "inlineKey" and "CODEWHISPERER_AUTO_TRIGGER_ENABLED"
  * the remaining grouop of users should belong to "new users who has not seen tutorial"
  */
 export class LineAnnotationController implements vscode.Disposable {
@@ -227,8 +228,8 @@ export class LineAnnotationController implements vscode.Disposable {
         })
 
     constructor(private readonly container: Container) {
-        const cachedState = fromId(globals.context.globalState.get<string>(inlinehintKey))
-        const cachedAutotriggerEnabled = globals.context.globalState.get<boolean>(autoTriggerEnabledKey)
+        const cachedState = fromId(globals.globalState.get<string>(inlinehintKey))
+        const cachedAutotriggerEnabled = globals.globalState.get<boolean>('CODEWHISPERER_AUTO_TRIGGER_ENABLED')
 
         // new users (has or has not seen tutorial)
         if (cachedAutotriggerEnabled === undefined || cachedState !== undefined) {
@@ -242,33 +243,35 @@ export class LineAnnotationController implements vscode.Disposable {
         }
 
         this._disposable = vscode.Disposable.from(
-            subscribeOnce(this.container.lineTracker.onReady)(async _ => {
+            subscribeOnce(this.container.lineTracker.onReady)(async (_) => {
                 await this.onReady()
             }),
-            RecommendationService.instance.suggestionActionEvent(async e => {
-                if (!this._isReady) {
-                    return
-                }
-
-                if (this._currentState instanceof ManualtriggerState) {
-                    if (e.triggerType === 'OnDemand' && this._currentState.hasManualTrigger === false) {
-                        this._currentState.hasManualTrigger = true
+            RecommendationService.instance.suggestionActionEvent(async (e) => {
+                await telemetry.withTraceId(async () => {
+                    if (!this._isReady) {
+                        return
                     }
-                    if (
-                        e.response?.recommendationCount !== undefined &&
-                        e.response?.recommendationCount > 0 &&
-                        this._currentState.hasValidResponse === false
-                    ) {
-                        this._currentState.hasValidResponse = true
-                    }
-                }
 
-                await this.refresh(e.editor, 'codewhisperer')
+                    if (this._currentState instanceof ManualtriggerState) {
+                        if (e.triggerType === 'OnDemand' && this._currentState.hasManualTrigger === false) {
+                            this._currentState.hasManualTrigger = true
+                        }
+                        if (
+                            e.response?.recommendationCount !== undefined &&
+                            e.response?.recommendationCount > 0 &&
+                            this._currentState.hasValidResponse === false
+                        ) {
+                            this._currentState.hasValidResponse = true
+                        }
+                    }
+
+                    await this.refresh(e.editor, 'codewhisperer')
+                }, TelemetryHelper.instance.traceId)
             }),
-            this.container.lineTracker.onDidChangeActiveLines(async e => {
+            this.container.lineTracker.onDidChangeActiveLines(async (e) => {
                 await this.onActiveLinesChanged(e)
             }),
-            this.container.auth.auth.onDidChangeConnectionState(async e => {
+            this.container.auth.auth.onDidChangeConnectionState(async (e) => {
                 if (e.state !== 'authenticating') {
                     await this.refresh(vscode.window.activeTextEditor, 'editor')
                 }
@@ -307,8 +310,8 @@ export class LineAnnotationController implements vscode.Disposable {
 
     async dismissTutorial() {
         this._currentState = new EndState()
-        await vscode.commands.executeCommand('setContext', inlinehintWipKey, false)
-        await set(inlinehintKey, this._currentState.id, globals.context.globalState)
+        await setContext('aws.codewhisperer.tutorial.workInProgress', false)
+        await globals.globalState.update(inlinehintKey, this._currentState.id)
     }
 
     private async onActiveLinesChanged(e: LinesChangeEvent) {
@@ -404,7 +407,7 @@ export class LineAnnotationController implements vscode.Disposable {
 
         if (decorationOptions === undefined) {
             this.clear()
-            await vscode.commands.executeCommand('setContext', inlinehintWipKey, false)
+            await setContext('aws.codewhisperer.tutorial.workInProgress', false)
             return
         } else if (this.isTutorialDone()) {
             // special case
@@ -422,8 +425,8 @@ export class LineAnnotationController implements vscode.Disposable {
 
         decorationOptions.range = range
 
-        await set(inlinehintKey, this._currentState.id, globals.context.globalState)
-        await vscode.commands.executeCommand('setContext', inlinehintWipKey, true)
+        await globals.globalState.update(inlinehintKey, this._currentState.id)
+        await setContext('aws.codewhisperer.tutorial.workInProgress', true)
         editor.setDecorations(this.cwLineHintDecoration, [decorationOptions])
     }
 

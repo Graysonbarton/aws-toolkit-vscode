@@ -29,7 +29,6 @@ import { applyPatch } from 'diff'
 import { closeSecurityIssueWebview, showSecurityIssueWebview } from '../views/securityIssue/securityIssueWebview'
 import { Mutable } from '../../shared/utilities/tsUtils'
 import { CodeWhispererSource } from './types'
-import { FeatureConfigProvider } from '../service/featureConfigProvider'
 import { TelemetryHelper } from '../util/telemetryHelper'
 import { Auth, AwsConnection } from '../../auth'
 import { once } from '../../shared/utilities/functionUtils'
@@ -38,18 +37,20 @@ import { removeDiagnostic } from '../service/diagnosticsProvider'
 import { SecurityIssueHoverProvider } from '../service/securityIssueHoverProvider'
 import { SecurityIssueCodeActionProvider } from '../service/securityIssueCodeActionProvider'
 import { SsoAccessTokenProvider } from '../../auth/sso/ssoAccessTokenProvider'
-import { SystemUtilities } from '../../shared/systemUtilities'
-import { ToolkitError } from '../../shared/errors'
+import { ToolkitError, getTelemetryReason, getTelemetryReasonDesc } from '../../shared/errors'
 import { isRemoteWorkspace } from '../../shared/vscode/env'
 import { isBuilderIdConnection } from '../../auth/connection'
 import globals from '../../shared/extensionGlobals'
+import { getVscodeCliPath } from '../../shared/utilities/pathFind'
+import { setContext } from '../../shared/vscode/setContext'
+import { tryRun } from '../../shared/utilities/pathFind'
 
 const MessageTimeOut = 5_000
 
 export const toggleCodeSuggestions = Commands.declare(
     { id: 'aws.amazonq.toggleCodeSuggestion', compositeKey: { 1: 'source' } },
     (suggestionState: CodeSuggestionsState) => async (_: VsCodeCommandArg, source: CodeWhispererSource) => {
-        await telemetry.aws_modifySetting.run(async span => {
+        await telemetry.aws_modifySetting.run(async (span) => {
             span.record({
                 settingId: CodeWhispererConstants.autoSuggestionConfig.settingId,
             })
@@ -78,8 +79,8 @@ export const enableCodeSuggestions = Commands.declare(
     (context: ExtContext) =>
         async (isAuto: boolean = true) => {
             await CodeSuggestionsState.instance.setSuggestionsEnabled(isAuto)
-            await vscode.commands.executeCommand('setContext', 'aws.codewhisperer.connected', true)
-            await vscode.commands.executeCommand('setContext', 'aws.codewhisperer.connectionExpired', false)
+            await setContext('aws.codewhisperer.connected', true)
+            await setContext('aws.codewhisperer.connectionExpired', false)
             vsCodeState.isFreeTierLimitReached = false
             if (!isCloud9()) {
                 await vscode.commands.executeCommand('aws.amazonq.refreshStatusBar')
@@ -90,7 +91,7 @@ export const enableCodeSuggestions = Commands.declare(
 export const toggleCodeScans = Commands.declare(
     { id: 'aws.codeWhisperer.toggleCodeScan', compositeKey: { 1: 'source' } },
     (scansState: CodeScansState) => async (_: VsCodeCommandArg, source: CodeWhispererSource) => {
-        await telemetry.aws_modifySetting.run(async span => {
+        await telemetry.aws_modifySetting.run(async (span) => {
             if (isBuilderIdConnection(AuthUtil.instance.conn)) {
                 throw new Error(`Auto-scans are not supported with the Amazon Builder ID connection.`)
             }
@@ -219,8 +220,8 @@ export const connectWithCustomization = Commands.declare(
             // Otherwise if only a prefix is given, find an entry that matches it.
             // Backwards compatible with previous implementation.
             const match = customizationArn
-                ? persistedCustomizations.find(c => c.arn === customizationArn)
-                : persistedCustomizations.find(c => c.name?.startsWith(customizationNamePrefix as string))
+                ? persistedCustomizations.find((c) => c.arn === customizationArn)
+                : persistedCustomizations.find((c) => c.name?.startsWith(customizationNamePrefix as string))
 
             // If no match is found, nothing to do :)
             if (!match) {
@@ -288,7 +289,7 @@ export const openSecurityIssuePanel = Commands.declare(
 export const notifyNewCustomizationsCmd = Commands.declare(
     { id: 'aws.amazonq.notifyNewCustomizations', logging: false },
     () => () => {
-        notifyNewCustomizations().catch(e => {
+        notifyNewCustomizations().catch((e) => {
             getLogger().error('notifyNewCustomizations failed: %s', (e as Error).message)
         })
     }
@@ -300,13 +301,6 @@ function focusQAfterDelay() {
         void focusAmazonQPanel.execute(placeholder, 'startDelay')
     }, 1000)
 }
-
-export const fetchFeatureConfigsCmd = Commands.declare(
-    { id: 'aws.amazonq.fetchFeatureConfigs', logging: false },
-    () => async () => {
-        await FeatureConfigProvider.instance.fetchFeatureConfigs()
-    }
-)
 
 /**
  * Actually install Amazon Q.
@@ -322,7 +316,7 @@ export const installAmazonQExtension = Commands.declare(
              * installExtension will fail on remote environments when the amazon q extension is already installed locally.
              * Until thats fixed we need to manually install the amazon q extension using the cli
              */
-            const vscPath = await SystemUtilities.getVscodeCliPath()
+            const vscPath = await getVscodeCliPath()
             if (!vscPath) {
                 throw new ToolkitError('installAmazonQ: Unable to find VSCode CLI path', {
                     code: 'CodeCLINotFound',
@@ -335,7 +329,7 @@ export const installAmazonQExtension = Commands.declare(
                 },
                 (progress, token) => {
                     progress.report({ message: 'Installing Amazon Q' })
-                    return SystemUtilities.tryRun(vscPath, ['--install-extension', VSCODE_EXTENSION_ID.amazonq])
+                    return tryRun(vscPath, ['--install-extension', VSCODE_EXTENSION_ID.amazonq])
                 }
             )
             return
@@ -396,7 +390,8 @@ export const applySecurityFix = Commands.declare(
         } catch (err) {
             getLogger().error(`Apply fix command failed. ${err}`)
             applyFixTelemetryEntry.result = 'Failed'
-            applyFixTelemetryEntry.reason = err as string
+            applyFixTelemetryEntry.reason = getTelemetryReason(err)
+            applyFixTelemetryEntry.reasonDesc = getTelemetryReasonDesc(err)
         } finally {
             telemetry.codewhisperer_codeScanIssueApplyFix.emit(applyFixTelemetryEntry)
             TelemetryHelper.instance.sendCodeScanRemediationsEvent(
@@ -406,7 +401,7 @@ export const applySecurityFix = Commands.declare(
                 issue.findingId,
                 issue.ruleId,
                 source,
-                applyFixTelemetryEntry.reason,
+                applyFixTelemetryEntry.reasonDesc,
                 applyFixTelemetryEntry.result,
                 !!issue.suggestedFixes.length
             )
@@ -428,7 +423,7 @@ const registerToolkitApiCallbackOnce = once(() => {
     getLogger().info(`toolkitApi: Registering callbacks of toolkit api`)
     const auth = Auth.instance
 
-    auth.onDidChangeConnectionState(async e => {
+    auth.onDidChangeConnectionState(async (e) => {
         if (_toolkitApi && 'declareConnection' in _toolkitApi) {
             const id = e.id
             const conn = await auth.getConnection({ id })
@@ -444,7 +439,7 @@ const registerToolkitApiCallbackOnce = once(() => {
             }
         }
     })
-    auth.onDidDeleteConnection(async event => {
+    auth.onDidDeleteConnection(async (event) => {
         if (_toolkitApi && 'undeclareConnection' in _toolkitApi && event.storedProfile?.type === 'sso') {
             const startUrl = event.storedProfile.startUrl
             getLogger().info(`toolkitApi: undeclare connection ${event.connId} with starturl: ${startUrl}`)
@@ -468,7 +463,7 @@ export const registerToolkitApiCallback = Commands.declare(
             } else if (isExtensionActive(VSCODE_EXTENSION_ID.awstoolkit)) {
                 // when this command is executed by Amazon Q activation
                 const toolkitExt = vscode.extensions.getExtension(VSCODE_EXTENSION_ID.awstoolkit)
-                _toolkitApi = toolkitExt?.exports.getApi(VSCODE_EXTENSION_ID.amazonq)
+                _toolkitApi = toolkitExt?.exports?.getApi(VSCODE_EXTENSION_ID.amazonq)
             }
             if (_toolkitApi) {
                 registerToolkitApiCallbackOnce()
