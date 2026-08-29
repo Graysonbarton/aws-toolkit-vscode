@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode'
-import { getLogger } from '../../shared/logger'
+import { getLogger } from '../../shared/logger/logger'
 import { getNormalizedRelativePath } from '../../shared/utilities/pathUtils'
 import { getChildrenRange } from '../../shared/utilities/symbolUtilities'
 import { getTabSize } from '../../shared/utilities/textDocumentUtilities'
@@ -70,7 +70,7 @@ export async function configureParameterOverrides(
         const { json, isDirty } = populator.getResults()
 
         if (isDirty) {
-            await editor.edit(eb => {
+            await editor.edit((eb) => {
                 eb.replace(
                     new vscode.Range(
                         editor.document.positionAt(0),
@@ -124,21 +124,21 @@ async function getParameterOverridesRange(
         return defaultRange
     }
 
-    const templatesSymbol = symbols.find(c => c.name === 'templates')
+    const templatesSymbol = symbols.find((c) => c.name === 'templates')
     if (!templatesSymbol) {
         logger.warn(`Invalid format for document ${editor.document.uri}`)
 
         return defaultRange
     }
 
-    const templateSymbol = templatesSymbol.children.find(c => c.name === relativeTemplatePath)
+    const templateSymbol = templatesSymbol.children.find((c) => c.name === relativeTemplatePath)
     if (!templateSymbol) {
         logger.warn(`Cannot find template section '${relativeTemplatePath}' in: ${editor.document.uri}`)
 
         return defaultRange
     }
 
-    const parameterOverridesSymbol = templateSymbol.children.find(c => c.name === 'parameterOverrides')
+    const parameterOverridesSymbol = templateSymbol.children.find((c) => c.name === 'parameterOverrides')
     if (!parameterOverridesSymbol) {
         logger.warn(`Cannot find parameterOverrides section for '${relativeTemplatePath}' in: ${editor.document.uri}`)
 

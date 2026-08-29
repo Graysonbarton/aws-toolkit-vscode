@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ExtensionContext, OutputChannel, Uri } from 'vscode'
+import { ExtensionContext, LogOutputChannel, OutputChannel } from 'vscode'
 import { LoginManager } from '../auth/deprecated/loginManager'
 import { AwsResourceManager } from '../dynamicResources/awsResourceManager'
 import { AWSClientBuilder } from './awsClientBuilder'
@@ -16,7 +16,10 @@ import { SchemaService } from './schemas'
 import { TelemetryLogger } from './telemetry/telemetryLogger'
 import { TelemetryService } from './telemetry/telemetryService'
 import { UriHandler } from './vscode/uriHandler'
-import vscode from 'vscode'
+import { GlobalState } from './globalState'
+import { setContext } from './vscode/setContext'
+import { getLogger } from './logger/logger'
+import { AWSClientBuilderV3 } from './awsClientBuilderV3'
 
 type Clock = Pick<
     typeof globalThis,
@@ -46,7 +49,7 @@ function copyClock(): Clock {
 
     const browserAlternatives = getBrowserAlternatives()
     if (Object.keys(browserAlternatives).length > 0) {
-        console.log('globals: Using browser alternatives for clock functions')
+        getLogger().info('globals: Using browser alternatives for clock functions')
         Object.assign(clock, browserAlternatives)
     } else {
         // In node.js context
@@ -132,6 +135,8 @@ function proxyGlobals(globals_: ToolkitGlobals): ToolkitGlobals {
 let globals = proxyGlobals(resolveGlobalsObject())
 
 export function checkDidReload(context: ExtensionContext): boolean {
+    // TODO: fix this
+    // eslint-disable-next-line aws-toolkits/no-banned-usages
     return !!context.globalState.get<string>('ACTIVATION_LAUNCH_PATH_KEY')
 }
 
@@ -145,11 +150,12 @@ export function initialize(context: ExtensionContext, isWeb: boolean = false): T
         context,
         clock: copyClock(),
         didReload: checkDidReload(context),
+        // eslint-disable-next-line aws-toolkits/no-banned-usages
+        globalState: new GlobalState(context.globalState),
         manifestPaths: {} as ToolkitGlobals['manifestPaths'],
-        visualizationResourcePaths: {} as ToolkitGlobals['visualizationResourcePaths'],
         isWeb,
     })
-    void vscode.commands.executeCommand('setContext', 'aws.isWebExtHost', isWeb)
+    void setContext('aws.isWebExtHost', isWeb)
 
     initialized = true
 
@@ -166,18 +172,32 @@ export { globals as default }
  * Namespace for common variables used globally in the extension.
  * All variables here must be initialized in the activate() method of extension.ts
  */
-interface ToolkitGlobals {
+export interface ToolkitGlobals {
     readonly context: ExtensionContext
+    /** Global, shared (with all vscode instances, including remote!), mutable, persisted state (survives IDE restart), namespaced to the extension (not shared with other vscode extensions). */
+    readonly globalState: GlobalState
     /** Decides the prefix for package.json extension parameters, e.g. commands, 'setContext' values, etc. */
     contextPrefix: string
+
+    //
     // TODO: make the rest of these readonly (or delete them)
+    //
+
+    /**
+     * For "normal" messages, to show output from various application features (the result of
+     * a Lambda invocation, "sam build" output, etc.).
+     */
     outputChannel: OutputChannel
-    logOutputChannel: OutputChannel
+    /**
+     * Log messages. Use `outputChannel` for application messages.
+     */
+    logOutputChannel: LogOutputChannel
     loginManager: LoginManager
     awsContextCommands: AwsContextCommands
     awsContext: AwsContext
     regionProvider: RegionProvider
     sdkClientBuilder: AWSClientBuilder
+    sdkClientBuilderV3: AWSClientBuilderV3
     telemetry: TelemetryService & { logger: TelemetryLogger }
     /** template.yaml registry. _Avoid_ calling this until it is actually needed (for SAM features). */
     templateRegistry: Promise<CloudFormationTemplateRegistry>
@@ -200,16 +220,6 @@ interface ToolkitGlobals {
      * Keep in mind that this clock's `Date` constructor will be different than the global one when mocked.
      */
     readonly clock: Clock
-
-    visualizationResourcePaths: {
-        localWebviewScriptsPath: Uri
-        webviewBodyScript: Uri
-        visualizationLibraryCachePath: Uri
-        visualizationLibraryScript: Uri
-        visualizationLibraryCSS: Uri
-        stateMachineCustomThemePath: Uri
-        stateMachineCustomThemeCSS: Uri
-    }
 
     readonly manifestPaths: {
         endpoints: string

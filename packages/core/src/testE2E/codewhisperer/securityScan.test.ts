@@ -20,9 +20,9 @@ import {
     listScanResults,
 } from '../../codewhisperer/service/securityScanHandler'
 import { makeTemporaryToolkitFolder } from '../../shared/filesystemUtilities'
-import { fsCommon } from '../../srcShared/fs'
+import fs from '../../shared/fs/fs'
 import { ZipUtil } from '../../codewhisperer/util/zipUtil'
-import { randomUUID } from '../../common/crypto'
+import { randomUUID } from '../../shared/crypto'
 
 const filePromptWithSecurityIssues = `from flask import app
 
@@ -58,13 +58,13 @@ describe('CodeWhisperer security scan', async function () {
 
     beforeEach(function () {
         void resetCodeWhispererGlobalVariables()
-        //valid connection required to run tests
+        // valid connection required to run tests
         skipTestIfNoValidConn(validConnection, this)
     })
 
     afterEach(async function () {
         if (tempFolder !== undefined) {
-            await fsCommon.delete(tempFolder)
+            await fs.delete(tempFolder, { recursive: true })
         }
     })
 
@@ -112,19 +112,19 @@ describe('CodeWhisperer security scan', async function () {
     }
 
     it('codescan request with valid input params and no security issues completes scan and returns no recommendations', async function () {
-        //set up file and editor
+        // set up file and editor
         const appRoot = path.join(workspaceFolder, 'python3.7-plain-sam-app')
         const appCodePath = path.join(appRoot, 'hello_world', 'app.py')
         const editor = await openTestFile(appCodePath)
 
-        //run security scan
+        // run security scan
         const securityJobSetupResult = await securityJobSetup(editor)
         const artifactMap = securityJobSetupResult.artifactMap
         const projectPaths = securityJobSetupResult.projectPaths
 
         const scope = CodeWhispererConstants.CodeAnalysisScope.PROJECT
 
-        //get job status and result
+        // get job status and result
         const scanJob = await createScanJob(
             client,
             artifactMap,
@@ -143,7 +143,8 @@ describe('CodeWhisperer security scan', async function () {
             scanJob.jobId,
             CodeWhispererConstants.codeScanFindingsSchema,
             projectPaths,
-            scope
+            scope,
+            editor
         )
 
         assert.deepStrictEqual(jobStatus, 'Completed')
@@ -151,7 +152,7 @@ describe('CodeWhisperer security scan', async function () {
     })
 
     it('codescan request with valid input params and security issues completes scan and returns recommendations', async function () {
-        //set up file and editor
+        // set up file and editor
         tempFolder = await makeTemporaryToolkitFolder()
         const tempFile = path.join(tempFolder, 'test.py')
         await testutil.toFile(filePromptWithSecurityIssues, tempFile)
@@ -159,7 +160,7 @@ describe('CodeWhisperer security scan', async function () {
 
         const scope = CodeWhispererConstants.CodeAnalysisScope.PROJECT
 
-        //run security scan
+        // run security scan
         const securityJobSetupResult = await securityJobSetup(editor)
         const artifactMap = securityJobSetupResult.artifactMap
         const projectPaths = securityJobSetupResult.projectPaths
@@ -171,7 +172,7 @@ describe('CodeWhisperer security scan', async function () {
             securityJobSetupResult.codeScanName
         )
 
-        //get job status and result
+        // get job status and result
         const jobStatus = await pollScanJobStatus(
             client,
             scanJob.jobId,
@@ -183,7 +184,8 @@ describe('CodeWhisperer security scan', async function () {
             scanJob.jobId,
             CodeWhispererConstants.codeScanFindingsSchema,
             projectPaths,
-            scope
+            scope,
+            editor
         )
 
         assert.deepStrictEqual(jobStatus, 'Completed')

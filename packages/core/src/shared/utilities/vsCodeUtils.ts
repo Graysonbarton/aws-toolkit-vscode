@@ -86,7 +86,7 @@ export function showInstallExtensionMsg(
     const items = [installBtn]
 
     const p = vscode.window.showErrorMessage(msg, ...items)
-    void p.then<string | undefined>(selection => {
+    void p.then<string | undefined>((selection) => {
         if (selection === installBtn) {
             void showExtensionPage(extId)
         }
@@ -179,8 +179,8 @@ export function isUntitledScheme(uri: vscode.Uri): boolean {
  * Example: `['foo', '**\/bar/'] => "["foo", "bar"]"`
  */
 export function globDirPatterns(dirs: string[]): string[] {
-    //The patterns themselves are not useful, but with postformating like "**/${pattern}/" they become glob dir patterns
-    return dirs.map(current => {
+    // The patterns themselves are not useful, but with postformating like "**/${pattern}/" they become glob dir patterns
+    return dirs.map((current) => {
         // Trim all "*" and "/" chars.
         // Note that the replace() patterns and order is intentionaly so that "**/*foo*/**" yields "*foo*".
         const scrubbed = current
@@ -203,7 +203,7 @@ export function normalizeVSCodeUri(uri: vscode.Uri): string {
 export function reloadWindowPrompt(message: string): void {
     const reload = 'Reload'
 
-    void vscode.window.showInformationMessage(message, reload).then(selected => {
+    void vscode.window.showInformationMessage(message, reload).then((selected) => {
         if (selected === reload) {
             void vscode.commands.executeCommand('workbench.action.reloadWindow')
         }
@@ -215,8 +215,11 @@ export function reloadWindowPrompt(message: string): void {
  * if user dismisses the vscode confirmation prompt.
  */
 export async function openUrl(url: vscode.Uri, source?: string): Promise<boolean> {
-    return telemetry.aws_openUrl.run(async span => {
-        span.record({ url: url.toString(), source })
+    // Avoid PII in URL.
+    const truncatedUrl = `${url.scheme}${url.authority}${url.path}${url.fragment.substring(20)}`
+
+    return telemetry.aws_openUrl.run(async (span) => {
+        span.record({ url: truncatedUrl, source })
         const didOpen = await vscode.env.openExternal(url)
         if (!didOpen) {
             throw new CancellationError('user')
@@ -246,7 +249,7 @@ export function replaceVscodeVars(val: string, workspaceFolder?: string): string
  */
 export function subscribeOnce<T>(event: vscode.Event<T>): vscode.Event<T> {
     return (listener: (e: T) => unknown, thisArgs?: unknown) => {
-        const result = event(e => {
+        const result = event((e) => {
             result.dispose()
             return listener.call(thisArgs, e)
         })

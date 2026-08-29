@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Ides } from 'aws-sdk/clients/codecatalyst'
+import { Ide } from '@aws-sdk/client-codecatalyst'
 import * as vscode from 'vscode'
 import { CodeCatalystResource, getCodeCatalystConfig } from '../shared/clients/codecatalystClient'
 import { pushIf } from '../shared/utilities/collectionUtils'
-import { getLogger } from '../shared/logger'
+import { getLogger } from '../shared/logger/logger'
 
 /**
  * Builds a web URL from the given CodeCatalyst object.
@@ -49,12 +49,12 @@ export function getHelpUrl(): string {
  */
 export function openCodeCatalystUrl(o: CodeCatalystResource) {
     const url = toCodeCatalystUrl(o)
-    vscode.env.openExternal(vscode.Uri.parse(url)).then(undefined, e => {
+    vscode.env.openExternal(vscode.Uri.parse(url)).then(undefined, (e) => {
         getLogger().error('openExternal failed: %s', (e as Error).message)
     })
 }
 
 /** Returns true if the dev env has a "vscode" IDE runtime. */
-export function isDevenvVscode(ides: Ides | undefined): boolean {
-    return ides !== undefined && ides.findIndex(ide => ide.name === 'VSCode') !== -1
+export function isDevenvVscode(ides: Ide[] | undefined): boolean {
+    return ides !== undefined && ides.some((ide) => ide.name === 'VSCode')
 }

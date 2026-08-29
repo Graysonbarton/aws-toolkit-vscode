@@ -4,7 +4,6 @@
  */
 
 import assert from 'assert'
-import { CloudWatchLogs } from 'aws-sdk'
 import * as sinon from 'sinon'
 import * as vscode from 'vscode'
 import { AsyncCollection } from '../../../shared/utilities/asyncCollection'
@@ -31,8 +30,9 @@ import {
     joinAll,
     isPresent,
     partialClone,
+    inspect,
 } from '../../../shared/utilities/collectionUtils'
-
+import * as CloudWatchLogs from '@aws-sdk/client-cloudwatch-logs'
 import { asyncGenerator } from '../../../shared/utilities/collectionUtils'
 
 describe('CollectionUtils', async function () {
@@ -151,21 +151,24 @@ describe('CollectionUtils', async function () {
 
             assert.ok(result)
             assert.strictEqual(result.length, 2)
-            assert.ok(result.find(item => item === 'a'))
-            assert.ok(result.find(item => item === 'b'))
+            assert.ok(result.find((item) => item === 'a'))
+            assert.ok(result.find((item) => item === 'b'))
         })
     })
 
     describe('toMap', async function () {
         it('returns an empty map if the input is empty', async function () {
-            const result = toMap<string, { key: string }>([], item => item.key)
+            const result = toMap<string, { key: string }>([], (item) => item.key)
 
             assert.ok(result)
             assert.strictEqual(result.size, 0)
         })
 
         it('uses selector to choose keys', async function () {
-            const result = toMap<string, { key: string }>([{ key: 'a' }, { key: 'b' }, { key: 'c' }], item => item.key)
+            const result = toMap<string, { key: string }>(
+                [{ key: 'a' }, { key: 'b' }, { key: 'c' }],
+                (item) => item.key
+            )
 
             assert.ok(result)
             assert.strictEqual(result.size, 3)
@@ -178,7 +181,7 @@ describe('CollectionUtils', async function () {
             assert.throws(() =>
                 toMap<string, { key: string }>(
                     [{ key: 'a' }, { key: 'b' }, { key: 'b' }, { key: 'c' }],
-                    item => item.key
+                    (item) => item.key
                 )
             )
         })
@@ -186,7 +189,7 @@ describe('CollectionUtils', async function () {
 
     describe('toMapAsync', async function () {
         it('returns an empty map if the input is empty', async function () {
-            const result = await toMapAsync<string, { key: string }>(asyncGenerator([]), item => item.key)
+            const result = await toMapAsync<string, { key: string }>(asyncGenerator([]), (item) => item.key)
 
             assert.ok(result)
             assert.strictEqual(result.size, 0)
@@ -195,7 +198,7 @@ describe('CollectionUtils', async function () {
         it('uses selector to choose keys', async function () {
             const result = await toMapAsync(
                 asyncGenerator([{ key: 'a' }, { key: 'b' }, { key: 'c' }]),
-                item => item.key
+                (item) => item.key
             )
 
             assert.ok(result)
@@ -209,7 +212,7 @@ describe('CollectionUtils', async function () {
             await assert.rejects(
                 toMapAsync<string, { key: string }>(
                     asyncGenerator([{ key: 'a' }, { key: 'b' }, { key: 'b' }, { key: 'c' }]),
-                    item => item.key
+                    (item) => item.key
                 )
             )
         })
@@ -223,8 +226,8 @@ describe('CollectionUtils', async function () {
             updateInPlace(
                 map,
                 [],
-                key => assert.fail(),
-                key => assert.fail()
+                (key) => assert.fail(),
+                (key) => assert.fail()
             )
 
             assert.ok(map)
@@ -239,11 +242,11 @@ describe('CollectionUtils', async function () {
             updateInPlace(
                 map,
                 ['b'],
-                key => {
+                (key) => {
                     assert.strictEqual(key, 'b')
                     map.set(key, 42)
                 },
-                key => assert.fail()
+                (key) => assert.fail()
             )
 
             assert.ok(map)
@@ -257,8 +260,8 @@ describe('CollectionUtils', async function () {
             updateInPlace(
                 map,
                 ['a'],
-                key => assert.fail(),
-                key => {
+                (key) => assert.fail(),
+                (key) => {
                     assert.strictEqual(key, 'a')
 
                     return 42
@@ -342,7 +345,7 @@ describe('CollectionUtils', async function () {
     describe('filter', async function () {
         it('returns the original sequence filtered by the predicate', async function () {
             const input: Iterable<number> = [1, 2]
-            const result = filter(input, i => i % 2 === 0)
+            const result = filter(input, (i) => i % 2 === 0)
 
             assert.ok(result)
             assert.strictEqual(result.length, 1)
@@ -352,7 +355,7 @@ describe('CollectionUtils', async function () {
 
     describe('filterAsync', async function () {
         it('returns the original sequence filtered by the predicate', async function () {
-            const result = await toArrayAsync(filterAsync([1, 2], async i => i % 2 === 0))
+            const result = await toArrayAsync(filterAsync([1, 2], async (i) => i % 2 === 0))
 
             assert.ok(result)
             assert.strictEqual(result.length, 1)
@@ -366,7 +369,7 @@ describe('CollectionUtils', async function () {
                 [CloudWatchLogs.DescribeLogStreamsRequest],
                 CloudWatchLogs.DescribeLogStreamsResponse
             >()
-            const responses: CloudWatchLogs.LogStreams[] = [
+            const responses: CloudWatchLogs.LogStream[][] = [
                 [{ logStreamName: 'stream1' }, { logStreamName: 'stream2' }, { logStreamName: 'stream3' }],
                 [{ logStreamName: 'stream4' }, { logStreamName: 'stream5' }, { logStreamName: 'stream6' }],
                 [{ logStreamName: 'stream7' }, { logStreamName: 'stream8' }, { logStreamName: 'stream9' }],
@@ -392,7 +395,7 @@ describe('CollectionUtils', async function () {
                 CloudWatchLogs.DescribeLogStreamsRequest,
                 CloudWatchLogs.DescribeLogStreamsResponse
             > = {
-                awsCall: async req => fakeCall(req),
+                awsCall: async (req) => fakeCall(req),
                 nextTokenNames: {
                     request: 'nextToken',
                     response: 'nextToken',
@@ -423,7 +426,7 @@ describe('CollectionUtils', async function () {
             }
             const populator = new IteratorTransformer<string, vscode.QuickPickItem>(
                 () => iteratorFn(),
-                val => {
+                (val) => {
                     if (val) {
                         return [{ label: val.toUpperCase() }]
                     }
@@ -508,7 +511,7 @@ describe('CollectionUtils', async function () {
         const requester = async (request: { next?: string }) => pages[request.next ?? 'page1']
 
         it('creates a new AsyncCollection', async function () {
-            const collection = pageableToCollection(requester, {}, 'next', 'data')
+            const collection = pageableToCollection(requester, {}, 'next' as never, 'data')
             assert.deepStrictEqual(await collection.promise(), [[0, 1, 2], [3, 4], [5], []])
         })
 
@@ -537,14 +540,14 @@ describe('CollectionUtils', async function () {
 
         describe('last', function () {
             it('it persists last element when mapped', async function () {
-                const collection = pageableToCollection(requester, {}, 'next', 'data')
-                const mapped = collection.map(i => i[0] ?? -1)
+                const collection = pageableToCollection(requester, {}, 'next' as never, 'data')
+                const mapped = collection.map((i) => i[0] ?? -1)
                 assert.strictEqual(await last(mapped), -1)
             })
         })
     })
 
-    const promise = <T>(val: T) => new Promise<T>(resolve => setImmediate(() => resolve(val)))
+    const promise = <T>(val: T) => new Promise<T>((resolve) => setImmediate(() => resolve(val)))
     const cons = <T, U>(arr: Promise<T>[], next: U) => {
         if (arr.length === 0) {
             return [promise(next)]
@@ -611,8 +614,8 @@ describe('CollectionUtils', async function () {
         async function run<T>(testCase: TestCase<T>) {
             const expected = testCase.expected ?? testCase.data
             const arr = toPromiseChain(testCase.data)
-            const left = toAsyncIterable(testCase.left.map(i => arr[i]))
-            const right = toAsyncIterable(testCase.right.map(i => arr[i]))
+            const left = toAsyncIterable(testCase.left.map((i) => arr[i]))
+            const right = toAsyncIterable(testCase.right.map((i) => arr[i]))
 
             assert.deepStrictEqual(await iterateAll(join(left, right)), expected)
         }
@@ -660,7 +663,7 @@ describe('CollectionUtils', async function () {
             it('resolves an async iterable of async iterables', async function () {
                 const data = [[0, 1], [2], [3, 4, 5]]
                 const expected = [0, 2, 3, 1, 4, 5]
-                const iterables = data.map(toPromiseChain).map(arr => toAsyncIterable(arr))
+                const iterables = data.map(toPromiseChain).map((arr) => toAsyncIterable(arr))
                 const iterable = joinAll(toAsyncIterable(iterables))
                 assert.deepStrictEqual(await iterateAll(iterable), expected)
             })
@@ -676,9 +679,41 @@ describe('CollectionUtils', async function () {
         })
     })
 
+    describe('inspect', function () {
+        let testData: any
+        before(function () {
+            testData = {
+                root: {
+                    A: {
+                        B: {
+                            C: {
+                                D: {
+                                    E: 'data',
+                                },
+                            },
+                        },
+                    },
+                },
+            }
+        })
+
+        it('defaults to a depth of 3', function () {
+            assert.strictEqual(inspect(testData), '{\n  root: { A: { B: { C: [Object] } } }\n}')
+        })
+
+        it('allows depth to be set manually', function () {
+            assert.strictEqual(
+                inspect(testData, { depth: 6 }),
+                "{\n  root: {\n    A: {\n      B: { C: { D: { E: 'data' } } }\n    }\n  }\n}"
+            )
+        })
+    })
+
     describe('partialClone', function () {
-        it('omits properties by depth', function () {
-            const testObj = {
+        let multipleTypedObj: object
+
+        before(async function () {
+            multipleTypedObj = {
                 a: 34234234234,
                 b: '123456789',
                 c: new Date(2023, 1, 1),
@@ -691,57 +726,80 @@ describe('CollectionUtils', async function () {
                     throw Error()
                 },
             }
+        })
 
-            assert.deepStrictEqual(partialClone(testObj, 1), {
-                ...testObj,
+        it('omits properties by depth', function () {
+            assert.deepStrictEqual(partialClone(multipleTypedObj, 1), {
+                ...multipleTypedObj,
                 d: {},
                 e: {},
             })
-            assert.deepStrictEqual(partialClone(testObj, 0, [], '[replaced]'), '[replaced]')
-            assert.deepStrictEqual(partialClone(testObj, 1, [], '[replaced]'), {
-                ...testObj,
+            assert.deepStrictEqual(partialClone(multipleTypedObj, 0, [], { replacement: '[replaced]' }), '[replaced]')
+            assert.deepStrictEqual(partialClone(multipleTypedObj, 1, [], { replacement: '[replaced]' }), {
+                ...multipleTypedObj,
                 d: '[replaced]',
                 e: '[replaced]',
             })
-            assert.deepStrictEqual(partialClone(testObj, 3), {
-                ...testObj,
+            assert.deepStrictEqual(partialClone(multipleTypedObj, 3), {
+                ...multipleTypedObj,
                 d: { d1: { d2: {} } },
             })
-            assert.deepStrictEqual(partialClone(testObj, 4), testObj)
+            assert.deepStrictEqual(partialClone(multipleTypedObj, 4), multipleTypedObj)
         })
 
         it('omits properties by name', function () {
-            const testObj = {
-                a: 34234234234,
-                b: '123456789',
-                c: new Date(2023, 1, 1),
-                d: { d1: { d2: { d3: 'deep' } } },
+            assert.deepStrictEqual(partialClone(multipleTypedObj, 2, ['c', 'e2'], { replacement: '[replaced]' }), {
+                ...multipleTypedObj,
+                c: '[replaced]',
+                d: { d1: '[replaced]' },
                 e: {
-                    e1: [4, 3, 7],
-                    e2: 'loooooooooo \n nnnnnnnnnnn \n gggggggg \n string',
-                },
-                f: () => {
-                    throw Error()
-                },
-            }
-
-            assert.deepStrictEqual(partialClone(testObj, 2, ['c', 'e2'], '[omitted]'), {
-                ...testObj,
-                c: '[omitted]',
-                d: { d1: '[omitted]' },
-                e: {
-                    e1: '[omitted]',
-                    e2: '[omitted]',
+                    e1: '[replaced]',
+                    e2: '[replaced]',
                 },
             })
-            assert.deepStrictEqual(partialClone(testObj, 3, ['c', 'e2'], '[omitted]'), {
-                ...testObj,
-                c: '[omitted]',
-                d: { d1: { d2: '[omitted]' } },
+            assert.deepStrictEqual(partialClone(multipleTypedObj, 3, ['c', 'e2'], { replacement: '[replaced]' }), {
+                ...multipleTypedObj,
+                c: '[replaced]',
+                d: { d1: { d2: '[replaced]' } },
                 e: {
                     e1: [4, 3, 7],
-                    e2: '[omitted]',
+                    e2: '[replaced]',
                 },
+            })
+        })
+
+        it('truncates properties by maxLength', function () {
+            const testObj = {
+                strValue: '1',
+                boolValue: true,
+                longString: '11111',
+                nestedObj: {
+                    nestedObjAgain: {
+                        longNestedStr: '11111',
+                        shortNestedStr: '11',
+                    },
+                },
+                nestedObj2: {
+                    functionValue: (_: unknown) => {},
+                },
+                nestedObj3: {
+                    myArray: ['1', '11111', '1'],
+                },
+                objInArray: [{ shortString: '11', longString: '11111' }],
+            }
+            assert.deepStrictEqual(partialClone(testObj, 5, [], { maxStringLength: 2 }), {
+                ...testObj,
+                longString: '11...',
+                nestedObj: {
+                    nestedObjAgain: {
+                        longNestedStr: '11...',
+                        shortNestedStr: '11',
+                    },
+                },
+                nestedObj3: {
+                    myArray: ['1', '11...', '1'],
+                },
+                objInArray: [{ shortString: '11', longString: '11...' }],
             })
         })
     })

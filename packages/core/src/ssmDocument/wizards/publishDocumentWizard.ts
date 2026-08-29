@@ -6,7 +6,7 @@
 import * as nls from 'vscode-nls'
 const localize = nls.loadMessageBundle()
 
-import { SSM } from 'aws-sdk'
+import { DocumentKeyValuesFilter } from '@aws-sdk/client-ssm'
 import { createCommonButtons } from '../../shared/ui/buttons'
 import { createRegionPrompter } from '../../shared/ui/common/region'
 import { createInputBox } from '../../shared/ui/inputPrompter'
@@ -27,8 +27,8 @@ export enum PublishSSMDocumentAction {
     QuickUpdate = 'Update',
 }
 
-async function* loadDocuments(region: string, documentType?: SSM.Types.DocumentType) {
-    const filters: SSM.Types.DocumentKeyValuesFilterList = [
+async function* loadDocuments(region: string, documentType?: string) {
+    const filters: DocumentKeyValuesFilter[] = [
         {
             Key: 'Owner',
             Values: ['Self'],
@@ -124,12 +124,12 @@ export class PublishSSMDocumentWizard extends Wizard<PublishSSMDocumentWizardRes
                     'Which AWS Region would you like to publish to?'
                 ),
                 serviceFilter: 'ssm',
-            }).transform(r => r.id)
+            }).transform((r) => r.id)
         )
 
-        form.action.bindPrompter(state => createPublishPrompter(state.region!))
+        form.action.bindPrompter((state) => createPublishPrompter(state.region!))
 
-        form.name.bindPrompter(state => {
+        form.name.bindPrompter((state) => {
             switch (state.action!) {
                 case PublishSSMDocumentAction.QuickCreate:
                     return createNamePrompter()

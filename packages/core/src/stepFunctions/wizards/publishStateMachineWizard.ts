@@ -21,8 +21,8 @@ import { createQuickPick, DataQuickPickItem, QuickPickPrompter } from '../../sha
 import { Wizard, WIZARD_BACK } from '../../shared/wizards/wizard'
 import { isStepFunctionsRole } from '../utils'
 import { createRolePrompter } from '../../shared/ui/common/roles'
-import { DefaultIamClient } from '../../shared/clients/iamClient'
-import { DefaultStepFunctionsClient } from '../../shared/clients/stepFunctionsClient'
+import { IamClient } from '../../shared/clients/iam'
+import { StepFunctionsClient } from '../../shared/clients/stepFunctions'
 
 export enum PublishStateMachineAction {
     QuickCreate,
@@ -95,7 +95,7 @@ export interface PublishStateMachineWizardState {
 }
 
 function createStepFunctionsRolePrompter(region: string) {
-    const client = new DefaultIamClient(region)
+    const client = new IamClient(region)
 
     return createRolePrompter(client, {
         helpUrl: vscode.Uri.parse(sfnCreateIamRoleUrl),
@@ -109,14 +109,14 @@ function createStepFunctionsRolePrompter(region: string) {
 }
 
 async function* listStateMachines(region: string) {
-    const client = new DefaultStepFunctionsClient(region)
+    const client = new StepFunctionsClient(region)
 
     for await (const machine of client.listStateMachines()) {
         yield [
             {
-                label: machine.name,
-                data: machine.stateMachineArn,
-                description: machine.stateMachineArn,
+                label: machine.name || '',
+                data: machine.stateMachineArn || '',
+                description: machine.stateMachineArn || '',
             },
         ]
     }
@@ -156,24 +156,24 @@ export class PublishStateMachineWizard extends Wizard<PublishStateMachineWizardS
             createRegionPrompter(undefined, {
                 serviceFilter: 'states',
                 helpUrl: sfnSupportedRegionsUrl,
-            }).transform(r => r.id)
+            }).transform((r) => r.id)
         )
 
         form.publishAction.bindPrompter(({ region }) => createPublishActionPrompter(region!))
 
         form.createResponse.roleArn.bindPrompter(
-            ({ region }) => createStepFunctionsRolePrompter(region!).transform(r => r.Arn),
+            ({ region }) => createStepFunctionsRolePrompter(region!).transform((r) => r.Arn),
             {
-                showWhen: form => form.publishAction === PublishStateMachineAction.QuickCreate,
+                showWhen: (form) => form.publishAction === PublishStateMachineAction.QuickCreate,
             }
         )
 
         form.createResponse.name.bindPrompter(() => createNamePrompter(), {
-            showWhen: form => form.publishAction === PublishStateMachineAction.QuickCreate,
+            showWhen: (form) => form.publishAction === PublishStateMachineAction.QuickCreate,
         })
 
         form.updateResponse.stateMachineArn.bindPrompter(({ region }) => createUpdateStateMachinePrompter(region!), {
-            showWhen: form => form.publishAction === PublishStateMachineAction.QuickUpdate,
+            showWhen: (form) => form.publishAction === PublishStateMachineAction.QuickUpdate,
         })
     }
 }

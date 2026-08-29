@@ -4,34 +4,36 @@
  */
 
 import { TreeItemCollapsibleState } from 'vscode'
-import { ApiGatewayNode } from '../apigateway/explorer/apiGatewayNodes'
+import { ApiGatewayNode } from '../awsService/apigateway/explorer/apiGatewayNodes'
 import { SchemasNode } from '../eventSchemas/explorer/schemasNode'
 import { CloudFormationNode } from '../lambda/explorer/cloudFormationNodes'
-import { CloudWatchLogsNode } from '../cloudWatchLogs/explorer/cloudWatchLogsNode'
+import { CloudWatchLogsNode } from '../awsService/cloudWatchLogs/explorer/cloudWatchLogsNode'
 import { LambdaNode } from '../lambda/explorer/lambdaNodes'
-import { S3Node } from '../s3/explorer/s3Nodes'
-import { EcrNode } from '../ecr/explorer/ecrNode'
-import { RedshiftNode } from '../redshift/explorer/redshiftNode'
-import { IotNode } from '../iot/explorer/iotNodes'
+import { S3Node } from '../awsService/s3/explorer/s3Nodes'
+import { EcrNode } from '../awsService/ecr/explorer/ecrNode'
+import { RedshiftNode } from '../awsService/redshift/explorer/redshiftNode'
+import { IotNode } from '../awsService/iot/explorer/iotNodes'
 import { Region } from '../shared/regions/endpoints'
 import { defaultPartition, RegionProvider } from '../shared/regions/regionProvider'
 import { AWSTreeNodeBase } from '../shared/treeview/nodes/awsTreeNodeBase'
 import { StepFunctionsNode } from '../stepFunctions/explorer/stepFunctionsNodes'
 import { SsmDocumentNode } from '../ssmDocument/explorer/ssmDocumentNode'
 import { ResourcesNode } from '../dynamicResources/explorer/nodes/resourcesNode'
-import { AppRunnerNode } from '../apprunner/explorer/apprunnerNode'
-import { DefaultAppRunnerClient } from '../shared/clients/apprunnerClient'
+import { AppRunnerNode } from '../awsService/apprunner/explorer/apprunnerNode'
+import { DocumentDBNode } from '../docdb/explorer/docdbNode'
+import { DefaultDocumentDBClient } from '../shared/clients/docdbClient'
+import { AppRunnerClient } from '../shared/clients/apprunner'
 import { DefaultEcrClient } from '../shared/clients/ecrClient'
 import { DefaultRedshiftClient } from '../shared/clients/redshiftClient'
 import { DefaultIotClient } from '../shared/clients/iotClient'
-import { DefaultS3Client } from '../shared/clients/s3Client'
+import { S3Client } from '../shared/clients/s3'
 import { DefaultSchemaClient } from '../shared/clients/schemaClient'
-import { getEcsRootNode } from '../ecs/model'
+import { getEcsRootNode } from '../awsService/ecs/model'
 import { compareTreeItems, TreeShim } from '../shared/treeview/utils'
-import { Ec2ParentNode } from '../ec2/explorer/ec2ParentNode'
-import { DevSettings } from '../shared/settings'
-import { Ec2Client } from '../shared/clients/ec2Client'
-import { isCloud9 } from '../shared/extensionUtilities'
+import { Ec2ParentNode } from '../awsService/ec2/explorer/ec2ParentNode'
+import { Ec2Client } from '../shared/clients/ec2'
+import { SagemakerParentNode } from '../awsService/sagemaker/explorer/sagemakerParentNode'
+import { SagemakerClient } from '../shared/clients/sagemaker'
 
 interface ServiceNode {
     allRegions?: boolean
@@ -53,11 +55,15 @@ const serviceCandidates: ServiceNode[] = [
     },
     {
         serviceId: 'apprunner',
-        createFn: (regionCode: string) => new AppRunnerNode(regionCode, new DefaultAppRunnerClient(regionCode)),
+        createFn: (regionCode: string) => new AppRunnerNode(regionCode, new AppRunnerClient(regionCode)),
     },
     {
         serviceId: 'cloudformation',
         createFn: (regionCode: string) => new CloudFormationNode(regionCode),
+    },
+    {
+        serviceId: 'docdb',
+        createFn: (regionCode: string) => new DocumentDBNode(DefaultDocumentDBClient.create(regionCode)),
     },
     {
         serviceId: 'logs',
@@ -65,7 +71,6 @@ const serviceCandidates: ServiceNode[] = [
     },
     {
         serviceId: 'ec2',
-        when: () => DevSettings.instance.isDevMode(),
         createFn: (regionCode: string, partitionId: string) =>
             new Ec2ParentNode(regionCode, partitionId, new Ec2Client(regionCode)),
     },
@@ -74,7 +79,6 @@ const serviceCandidates: ServiceNode[] = [
         createFn: (regionCode: string) => new EcrNode(new DefaultEcrClient(regionCode)),
     },
     {
-        when: () => !isCloud9(),
         serviceId: 'redshift',
         createFn: (regionCode: string) => new RedshiftNode(new DefaultRedshiftClient(regionCode)),
     },
@@ -92,7 +96,11 @@ const serviceCandidates: ServiceNode[] = [
     },
     {
         serviceId: 's3',
-        createFn: (regionCode: string) => new S3Node(new DefaultS3Client(regionCode)),
+        createFn: (regionCode: string) => new S3Node(new S3Client(regionCode)),
+    },
+    {
+        serviceId: 'api.sagemaker',
+        createFn: (regionCode: string) => new SagemakerParentNode(regionCode, new SagemakerClient(regionCode)),
     },
     {
         serviceId: 'schemas',
@@ -126,7 +134,10 @@ export class RegionNode extends AWSTreeNodeBase {
         return this.region.name
     }
 
-    public constructor(region: Region, private readonly regionProvider: RegionProvider) {
+    public constructor(
+        region: Region,
+        private readonly regionProvider: RegionProvider
+    ) {
         super(region.name, TreeItemCollapsibleState.Expanded)
         this.contextValue = 'awsRegionNode'
         this.region = region

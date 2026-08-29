@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode'
 import * as AWS from '@aws-sdk/types'
-import { getLogger } from '../shared/logger'
+import { getLogger } from '../shared/logger/logger'
 import { ClassToInterfaceType } from './utilities/tsUtils'
 import { CredentialsShim } from '../auth/deprecated/loginManager'
 export interface AwsContextCredentials {
@@ -13,6 +13,7 @@ export interface AwsContextCredentials {
     readonly credentialsId: string
     readonly accountId?: string
     readonly defaultRegion?: string
+    readonly endpointUrl?: string
 }
 
 /** AWS Toolkit context change */
@@ -77,7 +78,7 @@ export class DefaultAwsContext implements AwsContext {
      */
     public async getCredentials(): Promise<AWS.Credentials | undefined> {
         return (
-            this.shim?.get().catch(error => {
+            this.shim?.get().catch((error) => {
                 getLogger().warn(`credentials: failed to retrieve latest credentials: ${error.message}`)
                 return undefined
             }) ?? this.currentCredentials?.credentials
@@ -104,6 +105,13 @@ export class DefaultAwsContext implements AwsContext {
         }
 
         return this.currentCredentials?.defaultRegion ?? defaultRegion
+    }
+
+    /**
+     * Gets the endpoint URL configured for the current credentials profile, if any.
+     */
+    public getCredentialEndpointUrl(): string | undefined {
+        return this.currentCredentials?.endpointUrl
     }
 
     private emitEvent() {

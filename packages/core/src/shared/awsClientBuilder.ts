@@ -10,6 +10,7 @@ import { AwsContext } from './awsContext'
 import { DevSettings } from './settings'
 import { getUserAgent } from './telemetry/util'
 import { telemetry } from './telemetry/telemetry'
+import { isLocalStackConnection } from '../auth/utils'
 
 /** Suppresses a very noisy warning printed by AWS SDK v2, which clutters local debugging output, CI logs, etc. */
 export function disableAwsSdkWarning() {
@@ -82,8 +83,11 @@ export class DefaultAWSClientBuilder implements AWSClientBuilder {
         const listeners = Array.isArray(onRequest) ? onRequest : [onRequest]
         const opt = { ...options }
         delete opt.onRequestSetup
+        if (opt.credentialProvider) {
+            opt.credentials = await opt.credentialProvider.resolvePromise()
+        }
 
-        if (!opt.credentials && !opt.token) {
+        if (!opt.credentials && !opt.token && !opt.credentialProvider) {
             const shim = this.awsContext.credentialsShim
 
             if (!shim) {
@@ -100,7 +104,7 @@ export class DefaultAWSClientBuilder implements AWSClientBuilder {
                     // Always try to fetch the latest creds first, attempting a refresh if needed
                     // A 'passive' refresh is attempted first, before trying an 'active' one if certain criteria are met
                     shim.get()
-                        .then(creds => {
+                        .then((creds) => {
                             this.loadCreds(creds)
                             this.needsRefresh() ? this.refresh(callback) : callback()
                         })
@@ -109,7 +113,7 @@ export class DefaultAWSClientBuilder implements AWSClientBuilder {
 
                 public override refresh(callback: (err?: AWSError) => void): void {
                     shim.refresh()
-                        .then(creds => {
+                        .then((creds) => {
                             this.loadCreds(creds)
                             // The SDK V2 sets `expired` on certain errors so we should only
                             // unset the flag after acquiring new credentials via `refresh`
@@ -141,6 +145,16 @@ export class DefaultAWSClientBuilder implements AWSClientBuilder {
             apiConfig?.metadata?.serviceId?.toLowerCase() ??
             (type as unknown as { serviceIdentifier?: string }).serviceIdentifier
 
+        // Get endpoint url from the active profile if there's no endpoint directly passed as a parameter
+        const endpointUrl = this.awsContext.getCredentialEndpointUrl()
+        if (!('endpoint' in opt) && endpointUrl !== undefined) {
+            opt.endpoint = endpointUrl
+        }
+        if (isLocalStackConnection()) {
+            // Disable host prefixes for LocalStack
+            opt.hostPrefixEnabled = false
+        }
+        // Then check if there's an endpoint in the dev settings
         if (serviceName) {
             opt.endpoint = settings.get('endpoints', {})[serviceName] ?? opt.endpoint
         }
@@ -151,8 +165,8 @@ export class DefaultAWSClientBuilder implements AWSClientBuilder {
         // Record request IDs to the current context, potentially overriding the field if
         // multiple API calls are made in the same context. We only do failures as successes
         // are generally uninteresting and noisy.
-        listeners.push(request => {
-            request.on('error', err => {
+        listeners.push((request) => {
+            request.on('error', (err) => {
                 if (!err.retryable) {
                     // TODO: update codegen so `record` enumerates all fields as a flat object instead of
                     // intersecting all of the definitions
@@ -171,7 +185,9 @@ export class DefaultAWSClientBuilder implements AWSClientBuilder {
 
         service.setupRequestListeners = (request: Request<any, AWSError>) => {
             originalSetup(request)
-            listeners.forEach(l => l(request as AWS.Request<any, AWSError> & RequestExtras))
+            for (const l of listeners) {
+                l(request as AWS.Request<any, AWSError> & RequestExtras)
+            }
         }
 
         return service

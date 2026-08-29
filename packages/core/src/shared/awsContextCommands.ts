@@ -32,7 +32,10 @@ import { openUrl } from './utilities/vsCodeUtils'
 export class AwsContextCommands {
     private readonly _regionProvider: RegionProvider
 
-    public constructor(regionProvider: RegionProvider, private readonly auth: Auth) {
+    public constructor(
+        regionProvider: RegionProvider,
+        private readonly auth: Auth
+    ) {
         this._regionProvider = regionProvider
     }
 
@@ -62,7 +65,7 @@ export class AwsContextCommands {
         await this.editCredentials()
         if (
             credentialsFiles.length === 0 &&
-            (await ToolkitPromptSettings.instance.isPromptEnabled('createCredentialsProfile')) &&
+            ToolkitPromptSettings.instance.isPromptEnabled('createCredentialsProfile') &&
             (await this.promptCredentialsSetup())
         ) {
             await this.onCommandCreateCredentialsProfile()
@@ -101,8 +104,8 @@ export class AwsContextCommands {
             return false // User canceled.
         }
 
-        const selected = result.map(res => res.detail).filter(isNonNullable)
-        if (selected.length !== currentRegions.size || selected.some(r => !currentRegions.has(r))) {
+        const selected = result.map((res) => res.detail).filter(isNonNullable)
+        if (selected.length !== currentRegions.size || selected.some((r) => !currentRegions.has(r))) {
             await this._regionProvider.updateExplorerRegions(selected)
             await vscode.commands.executeCommand('aws.refreshAwsExplorer', true)
         }

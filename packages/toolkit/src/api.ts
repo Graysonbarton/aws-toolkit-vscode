@@ -21,6 +21,7 @@ export const awsToolkitApi = {
                 getLogger().debug(`listConnections: extension ${extensionId}`)
                 const connections = await Auth.instance.listConnections()
                 const exposedConnections: AwsConnection[] = []
+                // eslint-disable-next-line unicorn/no-array-for-each
                 connections.forEach((x: Connection) => {
                     if (x.type === 'sso') {
                         const connState = Auth.instance.getConnectionState(x)
@@ -88,7 +89,7 @@ export const awsToolkitApi = {
                 onConnectionDeletion: (id: string) => Promise<void>
             ) {
                 getLogger().debug(`onDidChangeConnection: extension ${extensionId}`)
-                Auth.instance.onDidChangeConnectionState(async e => {
+                Auth.instance.onDidChangeConnectionState(async (e) => {
                     const conn = await Auth.instance.getConnection({ id: e.id })
                     if (conn && conn.type === 'sso') {
                         await onConnectionStateChange({
@@ -102,7 +103,7 @@ export const awsToolkitApi = {
                         } as AwsConnection)
                     }
                 })
-                Auth.instance.onDidDeleteConnection(async event => {
+                Auth.instance.onDidDeleteConnection(async (event) => {
                     await onConnectionDeletion(event.connId)
                 })
             },

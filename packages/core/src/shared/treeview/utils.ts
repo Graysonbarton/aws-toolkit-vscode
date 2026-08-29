@@ -7,7 +7,7 @@ import * as nls from 'vscode-nls'
 const localize = nls.loadMessageBundle()
 
 import * as vscode from 'vscode'
-import { getLogger } from '../logger'
+import { getLogger } from '../logger/logger'
 import { AWSTreeNodeBase } from './nodes/awsTreeNodeBase'
 import { UnknownError } from '../errors'
 import { Logging } from '../logger/commands'
@@ -95,7 +95,7 @@ export class TreeShim<T = unknown> extends AWSTreeNodeBase {
 
     public constructor(public readonly node: TreeNode<T>) {
         super('Loading...')
-        this.updateTreeItem().catch(e => {
+        this.updateTreeItem().catch((e) => {
             getLogger().error('TreeShim.updateTreeItem() failed: %s', (e as Error).message)
         })
 
@@ -117,7 +117,7 @@ export class TreeShim<T = unknown> extends AWSTreeNodeBase {
 
         const children = (await this.node.getChildren?.()) ?? []
 
-        return (this.children = children.map(n => new TreeShim(n)))
+        return (this.children = children.map((n) => new TreeShim(n)))
     }
 
     private update(item: vscode.TreeItem) {

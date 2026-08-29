@@ -7,7 +7,7 @@ import * as vscode from 'vscode'
 import * as nls from 'vscode-nls'
 import { getLogger } from '../../shared/logger/logger'
 import { showConfirmationMessage, showViewLogsMessage } from '../../shared/utilities/messages'
-import { CloudControlClient } from '../../shared/clients/cloudControlClient'
+import { CloudControlClient } from '../../shared/clients/cloudControl'
 import globals from '../../shared/extensionGlobals'
 import { telemetry } from '../../shared/telemetry/telemetry'
 import { millisecondsSince, Result } from '../../shared/telemetry/telemetry'
@@ -34,7 +34,7 @@ export async function deleteResource(
             location: vscode.ProgressLocation.Notification,
             cancellable: false,
         },
-        async progress => {
+        async (progress) => {
             let result: Result = 'Succeeded'
             const startTime = new globals.clock.Date()
 

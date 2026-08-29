@@ -12,19 +12,34 @@ describe('eslint', function () {
     it('passes eslint', function () {
         const result = runCmd(
             [
+                'node',
+                '--max-old-space-size=8192',
                 '../../node_modules/.bin/eslint',
                 '-c',
                 '../../.eslintrc.js',
+                // Note: eslint currently does not support multiple  --ignore-path args.
+                // Use --ignore-pattern as a workaround.
                 '--ignore-path',
-                '../../.eslintignore',
+                '../../.gitignore',
+                '--ignore-pattern',
+                '**/*.json',
+                '--ignore-pattern',
+                '**/*.gen.ts',
+                '--ignore-pattern',
+                '**/types/*.d.ts',
+                '--ignore-pattern',
+                '**/src/testFixtures/**',
                 '--ext',
                 '.ts',
-                '.',
+                '../core',
+                '../toolkit',
+                // TODO: fix lint issues in scripts/
+                // '../../scripts',
             ],
             {
                 throws: false,
             }
         )
-        assert.strictEqual(result.status, 0, result.stdout.toString())
+        assert.strictEqual(result.status, 0, result.output.toString())
     })
 })

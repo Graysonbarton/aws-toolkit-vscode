@@ -13,6 +13,21 @@
     >
         <div class="icon">
             <svg
+                v-if="itemType === LoginOption.CONSOLE_CREDENTIAL"
+                width="16"
+                height="16"
+                viewBox="0 0 16 16"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+            >
+                <path
+                    class="svg-path"
+                    fill-rule="evenodd"
+                    clip-rule="evenodd"
+                    d="M1.50024 1H14.5002L15.0002 1.5V4.5V13.5L14.5002 14H1.50024L1.00024 13.5V4.5V1.5L1.50024 1ZM2.00024 5V13H14.0002V5H2.00024ZM2.00024 4H14.0002V2H2.00024V4Z"
+                />
+            </svg>
+            <svg
                 v-if="itemType === LoginOption.BUILDER_ID"
                 width="16"
                 height="16"
@@ -59,7 +74,14 @@
             </svg>
         </div>
         <div class="text">
-            <div class="title">{{ itemTitle }}</div>
+            <div class="title">
+                {{ itemTitle }}
+                <template v-if="itemSubTitle">
+                    <span
+                        >- <i>{{ itemSubTitle }}</i></span
+                    >
+                </template>
+            </div>
             <div class="p" v-if="itemText" :title="itemText">{{ itemText }}</div>
         </div>
     </div>
@@ -75,6 +97,7 @@ export default defineComponent({
         itemId: Number,
         itemText: String,
         itemTitle: String,
+        itemSubTitle: String,
         itemType: Number,
         isSelected: Boolean,
         isHovering: Boolean,
@@ -83,6 +106,7 @@ export default defineComponent({
         return {
             itemId: this.itemId,
             itemTitle: this.itemTitle,
+            itemSubTitle: this.itemSubTitle,
             itemText: this.itemText,
             isSelected: this.isSelected,
             isHovering: false,
@@ -134,13 +158,15 @@ export default defineComponent({
     word-break: break-all;
 }
 
-.vscode-dark .item-container-base.focussed:before {
+.vscode-dark .item-container-base.focussed:before,
+body.vscode-high-contrast:not(body.vscode-high-contrast-light) .item-container-base.focussed:before {
     background-color: white;
     color: rgba(0, 0, 0, 0.8);
 }
-.vscode-light .item-container-base.focussed:before {
-    background-color: black;
-    color: rgba(255, 255, 255, 0.8);
+.vscode-light .item-container-base.focussed:before,
+body.vscode-high-contrast-light .item-container-base.focussed:before {
+    background-color: rgba(255, 255, 255, 0.8);
+    color: black;
 }
 
 .hovering {
@@ -148,7 +174,7 @@ export default defineComponent({
 }
 
 .selected {
-    border-color: #3675f4;
+    border-color: var(--vscode-textLink-foreground);
 }
 
 .title {
@@ -156,6 +182,18 @@ export default defineComponent({
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    margin-bottom: 0.2rem;
+}
+
+.title span {
+    font-size: var(--font-size-sm);
+    color: var(--vscode-textLink-foreground);
+}
+
+.p {
+    font-weight: var(--font-size-base);
+    margin-top: 0.2rem;
+    text-align: justify;
 }
 
 .text {
@@ -178,10 +216,18 @@ export default defineComponent({
     display: flex;
     align-items: center;
 }
-.vscode-dark .icon .svg-path {
+.vscode-dark .icon .svg-path,
+body.vscode-high-contrast:not(body.vscode-high-contrast-light) .icon .svg-path {
     fill: white;
 }
-.vscode-light .icon .svg-path {
+.vscode-light .icon .svg-path,
+body.vscode-high-contrast-light .icon .svg-path {
     fill: black;
+}
+
+.item-container-base .text .p {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 </style>

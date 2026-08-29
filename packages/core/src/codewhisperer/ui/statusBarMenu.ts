@@ -6,12 +6,12 @@
 import {
     createAutoSuggestions,
     createOpenReferenceLog,
-    createSecurityScan,
     createLearnMore,
     createFreeTierLimitMet,
     createSelectCustomization,
     createReconnect,
     createGettingStarted,
+    createManageSubscription,
     createSignout,
     createSeparator,
     createSettingsNode,
@@ -21,15 +21,16 @@ import {
     createAutoScans,
     createSignIn,
     switchToAmazonQNode,
+    createSelectRegionProfileNode,
 } from './codeWhispererNodes'
-import { hasVendedIamCredentials } from '../../auth/auth'
+import { hasVendedIamCredentials, hasVendedCredentialsFromMetadata } from '../../auth/auth'
 import { AuthUtil } from '../util/authUtil'
 import { DataQuickPickItem, createQuickPick } from '../../shared/ui/pickerPrompter'
 import { CodeScansState, CodeSuggestionsState, vsCodeState } from '../models/model'
 import { Commands } from '../../shared/vscode/commands2'
 import { createExitButton } from '../../shared/ui/buttons'
 import { telemetry } from '../../shared/telemetry/telemetry'
-import { getLogger } from '../../shared/logger'
+import { getLogger } from '../../shared/logger/logger'
 
 function getAmazonQCodeWhispererNodes() {
     const autoTriggerEnabled = CodeSuggestionsState.instance.isSuggestionsEnabled()
@@ -42,16 +43,15 @@ function getAmazonQCodeWhispererNodes() {
         return [createSignIn(), createLearnMore()]
     }
 
+    if (AuthUtil.instance.isConnected() && AuthUtil.instance.requireProfileSelection()) {
+        return []
+    }
+
     if (vsCodeState.isFreeTierLimitReached) {
         if (hasVendedIamCredentials()) {
             return [createFreeTierLimitMet(), createOpenReferenceLog()]
         }
-        return [
-            createFreeTierLimitMet(),
-            createOpenReferenceLog(),
-            createSeparator('Other Features'),
-            createSecurityScan(),
-        ]
+        return [createFreeTierLimitMet(), createOpenReferenceLog(), createSeparator('Other Features')]
     }
 
     if (hasVendedIamCredentials()) {
@@ -62,25 +62,31 @@ function getAmazonQCodeWhispererNodes() {
         // CodeWhisperer
         createSeparator('Inline Suggestions'),
         createAutoSuggestions(autoTriggerEnabled),
-        ...(AuthUtil.instance.isValidEnterpriseSsoInUse() && AuthUtil.instance.isCustomizationFeatureEnabled
-            ? [createSelectCustomization()]
-            : []),
         createOpenReferenceLog(),
         createGettingStarted(), // "Learn" node : opens Learn CodeWhisperer page
 
         // Security scans
-        createSeparator('Security Scans'),
+        createSeparator('Code Reviews'),
         ...(AuthUtil.instance.isBuilderIdInUse() ? [] : [createAutoScans(autoScansEnabled)]),
-        createSecurityScan(),
 
         // Amazon Q + others
         createSeparator('Other Features'),
+        ...(AuthUtil.instance.isValidEnterpriseSsoInUse() && AuthUtil.instance.isCustomizationFeatureEnabled
+            ? [createSelectCustomization()]
+            : []),
         switchToAmazonQNode(),
     ]
 }
 
 export function getQuickPickItems(): DataQuickPickItem<string>[] {
+    const isUsingEnterpriseSso = AuthUtil.instance.isValidEnterpriseSsoInUse()
+    const regionProfile = AuthUtil.instance.regionProfileManager.activeRegionProfile
+
     const children = [
+        // If the user has signed in but not selected a region, we strongly indicate they need to select
+        // a profile, otherwise features will not work.
+        ...(isUsingEnterpriseSso && !regionProfile ? [createSelectRegionProfileNode(undefined)] : []),
+
         ...getAmazonQCodeWhispererNodes(),
 
         // Generic Nodes
@@ -92,7 +98,10 @@ export function getQuickPickItems(): DataQuickPickItem<string>[] {
         // Add settings and signout
         createSeparator(),
         createSettingsNode(),
-        ...(AuthUtil.instance.isConnected() && !hasVendedIamCredentials() ? [createSignout()] : []),
+        ...(isUsingEnterpriseSso && regionProfile ? [createSelectRegionProfileNode(regionProfile)] : []),
+        ...(AuthUtil.instance.isConnected() && !hasVendedIamCredentials() && !hasVendedCredentialsFromMetadata()
+            ? [...(AuthUtil.instance.isBuilderIdInUse() ? [createManageSubscription()] : []), createSignout()]
+            : []),
     ]
 
     return children
@@ -103,7 +112,7 @@ export const listCodeWhispererCommands = Commands.declare({ id: listCodeWhispere
     telemetry.ui_click.emit({ elementId: 'cw_statusBarMenu' })
     Commands.tryExecute('aws.amazonq.refreshAnnotation', true)
         .then()
-        .catch(e => {
+        .catch((e) => {
             getLogger().debug(
                 `codewhisperer: running into error while executing command { refreshAnnotation } on user clicking statusbar: ${e}`
             )

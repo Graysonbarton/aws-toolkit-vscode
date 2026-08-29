@@ -5,12 +5,12 @@
 
 import * as path from 'path'
 import http from 'http'
-import { getLogger } from '../../shared/logger'
+import { getLogger } from '../../shared/logger/logger'
 import { ToolkitError } from '../../shared/errors'
 import { Socket } from 'net'
 import globals from '../../shared/extensionGlobals'
 import { Result } from '../../shared/utilities/result'
-import { FileSystemCommon } from '../../srcShared/fs'
+import fs from '../../shared/fs/fs'
 import { CancellationError } from '../../shared/utilities/timeoutUtils'
 
 export class MissingPortError extends ToolkitError {
@@ -67,7 +67,7 @@ export class AuthSSOServer {
     private _closed: boolean = false
 
     private constructor(private readonly state: string) {
-        this.authenticationPromise = new Promise<Result<string>>(resolve => {
+        this.authenticationPromise = new Promise<Result<string>>((resolve) => {
             this.deferred = { resolve }
         })
 
@@ -87,23 +87,30 @@ export class AuthSSOServer {
                     break
                 }
                 default: {
+                    const extensionRoot = path.resolve(globals.context.extensionUri.fsPath)
                     if (url.pathname.startsWith('/resources')) {
-                        const iconPath = path.join(globals.context.extensionUri.fsPath, url.pathname)
+                        const iconPath = path.resolve(extensionRoot, url.pathname.slice(1))
+                        if (!iconPath.startsWith(extensionRoot + path.sep)) {
+                            res.writeHead(403)
+                            res.end()
+                            break
+                        }
                         await this.loadResource(res, iconPath)
                         break
                     }
-                    const resourcePath = path.join(
-                        globals.context.extensionUri.fsPath,
-                        'dist/src/auth/sso/vue',
-                        url.pathname
-                    )
+                    const resourcePath = path.resolve(extensionRoot, 'dist/src/auth/sso/vue', url.pathname.slice(1))
+                    if (!resourcePath.startsWith(extensionRoot + path.sep)) {
+                        res.writeHead(403)
+                        res.end()
+                        break
+                    }
                     await this.loadResource(res, resourcePath)
                     break
                 }
             }
         })
 
-        this.server.on('connection', connection => {
+        this.server.on('connection', (connection) => {
             this.connections.push(connection)
         })
     }
@@ -113,7 +120,7 @@ export class AuthSSOServer {
         if (lastInstance !== undefined && !lastInstance.closed) {
             lastInstance
                 .close()!
-                .catch(err =>
+                .catch((err) =>
                     getLogger().error('Failed to close already existing auth sever in AuthSSOServer.init(): %s', err)
                 )
         }
@@ -134,7 +141,7 @@ export class AuthSSOServer {
                 reject(new ToolkitError('AuthSSOServer: Server has closed'))
             })
 
-            this.server.on('error', error => {
+            this.server.on('error', (error) => {
                 reject(new ToolkitError(`AuthSSOServer: Server failed: ${error}`))
             })
 
@@ -163,11 +170,11 @@ export class AuthSSOServer {
 
             getLogger().debug('AuthSSOServer: Attempting to close server.')
 
-            this.connections.forEach(connection => {
+            for (const connection of this.connections) {
                 connection.destroy()
-            })
+            }
 
-            this.server.close(err => {
+            this.server.close((err) => {
                 if (err) {
                     reject(err)
                 }
@@ -218,7 +225,7 @@ export class AuthSSOServer {
 
     private async loadResource(res: http.ServerResponse, resourcePath: string) {
         try {
-            const file = await FileSystemCommon.instance.readFile(resourcePath)
+            const file = await fs.readFileBytes(resourcePath)
             res.writeHead(200)
             res.end(file)
         } catch (e) {

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { getLogger } from '../logger'
+import { getLogger } from '../logger/logger'
 
 // Parses the endpoints.json file into a usable structure
 
@@ -105,7 +105,7 @@ function convertJsonMap<TIn, TOut>(
         return []
     }
 
-    return Object.keys(jsonMap).map(id => convertObject(id, jsonMap[id]))
+    return Object.keys(jsonMap).map((id) => convertObject(id, jsonMap[id]))
 }
 
 function convertToRegion(id: string, region: ManifestRegion): Region {

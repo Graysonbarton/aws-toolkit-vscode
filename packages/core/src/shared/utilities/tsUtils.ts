@@ -11,7 +11,7 @@ export function stringOrProp(obj: any, prop: string): string {
 }
 
 export function getMissingProps<T>(obj: T, ...props: (keyof T)[]): typeof props {
-    return props.filter(prop => obj[prop] === undefined)
+    return props.filter((prop) => obj[prop] === undefined)
 }
 
 export function hasProps<T, K extends keyof T>(obj: T, ...props: K[]): obj is Readonly<RequiredProps<T, K>> {
@@ -19,7 +19,7 @@ export function hasProps<T, K extends keyof T>(obj: T, ...props: K[]): obj is Re
 }
 
 export function hasStringProps<T, K extends PropertyKey>(obj: T, ...props: K[]): obj is T & { [P in K]: string } {
-    return props.filter(prop => typeof (obj as unknown as Record<K, unknown>)[prop] !== 'string').length === 0
+    return props.filter((prop) => typeof (obj as unknown as Record<K, unknown>)[prop] !== 'string').length === 0
 }
 
 export function assertHasProps<T, K extends keyof T>(
@@ -41,7 +41,7 @@ export function assertHasProps<T, K extends keyof T>(
 }
 
 export function selectFrom<T, K extends keyof T>(obj: T, ...props: K[]): { [P in K]: T[P] } {
-    return props.map(p => [p, obj[p]] as const).reduce((a, [k, v]) => ((a[k] = v), a), {} as { [P in K]: T[P] })
+    return props.map((p) => [p, obj[p]] as const).reduce((a, [k, v]) => ((a[k] = v), a), {} as { [P in K]: T[P] })
 }
 
 export function isNonNullable<T>(obj: T | void): obj is NonNullable<T> {
@@ -64,7 +64,7 @@ export function keys<T extends Record<string, any>>(obj: T): [keyof T & string] 
 }
 
 export function keysAsInt<T extends Record<number, any>>(obj: T): number[] {
-    return Object.keys(obj).map(k => parseInt(k))
+    return Object.keys(obj).map((k) => parseInt(k))
 }
 
 /**
@@ -92,6 +92,38 @@ export function createConstantMap<T extends PropertyKey, U extends PropertyKey>(
 
 export function createFactoryFunction<T extends new (...args: any[]) => any>(ctor: T): FactoryFunction<T> {
     return (...args) => new ctor(...args)
+}
+
+/**
+ * Try functions in the order presented and return the first returned result. If none return, throw the final error.
+ * @param functions non-empty list of functions to try.
+ * @returns
+ */
+export async function tryFunctions<Result>(functions: (() => Promise<Result>)[]): Promise<Result> {
+    let currentError: Error = new Error('No functions provided')
+    for (const func of functions) {
+        try {
+            return await func()
+        } catch (e) {
+            currentError = e as Error
+        }
+    }
+    throw currentError
+}
+
+/**
+ * Split a list into two sublists based on the result of a predicate.
+ * @param lst list to split
+ * @param pred predicate to apply to each element
+ * @returns two nested lists, where for all items x in the left sublist, pred(x) returns true. The remaining elements are in the right sublist.
+ */
+export function partition<T>(lst: T[], pred: (arg: T) => boolean): [T[], T[]] {
+    return lst.reduce(
+        ([leftAcc, rightAcc], item) => {
+            return pred(item) ? [[...leftAcc, item], rightAcc] : [leftAcc, [...rightAcc, item]]
+        },
+        [[], []] as [T[], T[]]
+    )
 }
 
 type NoSymbols<T> = { [Property in keyof T]: Property extends symbol ? never : Property }[keyof T]
@@ -151,3 +183,17 @@ export type FactoryFunction<T extends abstract new (...args: any[]) => any> = (
 
 /** Can be used to isolate all number fields of a record `T` */
 export type NumericKeys<T> = { [P in keyof T]-?: T[P] extends number | undefined ? P : never }[keyof T]
+
+export function omitIfPresent<T extends Record<string, unknown>>(obj: T, keys: string[]): T {
+    const objCopy = { ...obj }
+    for (const key of keys) {
+        if (key in objCopy) {
+            ;(objCopy as any)[key] = '[omitted]'
+        }
+    }
+    return objCopy
+}
+
+export function isDefined<T>(i: T | undefined): i is T {
+    return i !== undefined
+}

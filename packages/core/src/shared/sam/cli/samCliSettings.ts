@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { getLogger } from '../../logger'
+import { getLogger } from '../../logger/logger'
 import { fromExtensionManifest, Settings } from '../../settings'
 import { stripUndefined, toRecord } from '../../utilities/collectionUtils'
 import { ClassToInterfaceType, keys } from '../../utilities/tsUtils'
@@ -23,7 +23,7 @@ function SavedBuckets(value: unknown): SavedBuckets {
         throw new TypeError('Value was not a non-null object')
     }
 
-    const result = toRecord(keys(buckets), k => {
+    const result = toRecord(keys(buckets), (k) => {
         const v = buckets[k]
 
         if (typeof v !== 'object' || !v) {
@@ -31,7 +31,7 @@ function SavedBuckets(value: unknown): SavedBuckets {
             return undefined
         }
 
-        return toRecord(keys(v), p => {
+        return toRecord(keys(v), (p) => {
             const bucket = v[p]
 
             if (typeof bucket !== 'string') {
@@ -83,7 +83,6 @@ export class SamCliSettings extends fromExtensionManifest('aws.samcli', descript
             SamCliSettings.logIfChanged(`SAM CLI location (from settings): ${fromConfig}`)
             return { path: fromConfig, autoDetected: false }
         }
-
         const fromSearch = await this.locationProvider.getLocation(forceSearch)
         SamCliSettings.logIfChanged(`SAM CLI location (version: ${fromSearch?.version}): ${fromSearch?.path}`)
         return { path: fromSearch?.path, autoDetected: true }

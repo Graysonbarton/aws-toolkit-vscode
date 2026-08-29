@@ -7,7 +7,7 @@ import * as vscode from 'vscode'
 import { Auth } from '../auth/auth'
 import { getIdeProperties } from '../shared/extensionUtilities'
 import { getIcon } from '../shared/icons'
-import { getLogger, Logger } from '../shared/logger'
+import { getLogger, Logger } from '../shared/logger/logger'
 import { RegionProvider } from '../shared/regions/regionProvider'
 import { RefreshableAwsTreeProvider } from '../shared/treeview/awsTreeProvider'
 import { AWSCommandTreeNode } from '../shared/treeview/nodes/awsCommandTreeNode'
@@ -123,13 +123,13 @@ export class AwsExplorer implements vscode.TreeDataProvider<AWSTreeNodeBase>, Re
 
         const partitionRegions = this.regionProvider.getRegions()
         const userVisibleRegionCodes = this.regionProvider.getExplorerRegions()
-        const regionMap = toMap(partitionRegions, r => r.id)
+        const regionMap = toMap(partitionRegions, (r) => r.id)
 
         updateInPlace(
             this.regionNodes,
             intersection(regionMap.keys(), userVisibleRegionCodes),
-            key => this.regionNodes.get(key)!.update(regionMap.get(key)!),
-            key => new RegionNode(regionMap.get(key)!, this.regionProvider)
+            (key) => this.regionNodes.get(key)!.update(regionMap.get(key)!),
+            (key) => new RegionNode(regionMap.get(key)!, this.regionProvider)
         )
 
         if (this.regionNodes.size === 0) {

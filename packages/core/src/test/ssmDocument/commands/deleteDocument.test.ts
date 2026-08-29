@@ -9,7 +9,7 @@ import { DocumentItemNodeWriteable } from '../../../ssmDocument/explorer/documen
 import { SsmDocumentClient } from '../../../shared/clients/ssmDocumentClient'
 import { deleteDocument } from '../../../ssmDocument/commands/deleteDocument'
 import { RegistryItemNode } from '../../../ssmDocument/explorer/registryItemNode'
-import { SSM } from 'aws-sdk'
+import { DocumentFormat, DocumentIdentifier } from '@aws-sdk/client-ssm'
 import { getTestWindow } from '../../shared/vscode/window'
 import { stub } from '../../utilities/stubber'
 
@@ -21,9 +21,9 @@ describe('deleteDocument', async function () {
     let spyExecuteCommand: sinon.SinonSpy
     const fakeName: string = 'testDocument'
 
-    const fakeDoc: SSM.Types.DocumentIdentifier = {
+    const fakeDoc: DocumentIdentifier = {
         Name: fakeName,
-        DocumentFormat: 'json',
+        DocumentFormat: DocumentFormat.JSON,
         DocumentType: 'Automation',
         Owner: 'Amazon',
     }
@@ -64,7 +64,7 @@ describe('deleteDocument', async function () {
     })
 
     it('confirms deletion, deletes file, and refreshes parent node', async function () {
-        getTestWindow().onDidShowMessage(m => m.items.find(i => i.title === 'Delete')?.select())
+        getTestWindow().onDidShowMessage((m) => m.items.find((i) => i.title === 'Delete')?.select())
         await deleteDocument(node)
         getTestWindow().getFirstMessage().assertWarn('Are you sure you want to delete document testDocument?')
         sandbox.assert.calledWith(spyExecuteCommand, 'aws.refreshAwsExplorerNode', parentNode)

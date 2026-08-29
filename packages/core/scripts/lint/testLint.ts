@@ -9,14 +9,16 @@ void (async () => {
     try {
         console.log('Running linting tests...')
 
-        const mocha = new Mocha()
-
-        const testFiles = await glob('dist/src/testLint/**/*.test.js')
-        testFiles.forEach(file => {
-            mocha.addFile(file)
+        const mocha = new Mocha({
+            timeout: 5000,
         })
 
-        mocha.run(failures => {
+        const testFiles = await glob('dist/src/testLint/**/*.test.js')
+        for (const file of testFiles) {
+            mocha.addFile(file)
+        }
+
+        mocha.run((failures) => {
             const exitCode = failures ? 1 : 0
             console.log(`Finished running Main test suite with result code: ${exitCode}`)
             process.exit(exitCode)

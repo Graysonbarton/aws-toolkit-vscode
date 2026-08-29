@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Schemas } from 'aws-sdk'
-
+import { DescribeSchemaResponse } from '@aws-sdk/client-schemas'
 import assert from 'assert'
 import * as sinon from 'sinon'
 import * as vscode from 'vscode'
@@ -104,7 +103,7 @@ describe('viewSchemaItem', async function () {
             edit: () => {},
         } as any as vscode.TextEditor
 
-        sinon.stub(textEditor, 'edit').callsFake(async editBuilder => {
+        sinon.stub(textEditor, 'edit').callsFake(async (editBuilder) => {
             editBuilder(textEdit)
 
             return true
@@ -117,7 +116,7 @@ describe('viewSchemaItem', async function () {
     }
 
     function generateSchemaItemNode(): SchemaItemNode {
-        const schemaResponse: Schemas.DescribeSchemaResponse = {
+        const schemaResponse: DescribeSchemaResponse = {
             Content: awsEventSchemaRaw,
         }
         const schemaClient = new DefaultSchemaClient('')

@@ -5,17 +5,17 @@
 
 import * as vscode from 'vscode'
 import { toTitleCase } from '../utilities/textUtilities'
-import { isNameMangled } from './env'
 import { getLogger, NullLogger } from '../logger/logger'
 import { FunctionKeys, Functions, getFunctions } from '../utilities/classUtils'
 import { TreeItemContent, TreeNode } from '../treeview/resourceTreeDataProvider'
-import { telemetry, MetricName, VscodeExecuteCommand, Metric } from '../telemetry/telemetry'
+import { telemetry, MetricName, VscodeExecuteCommand, Metric, Span } from '../telemetry/telemetry'
 import globals from '../extensionGlobals'
 import { ToolkitError } from '../errors'
 import crypto from 'crypto'
 import { keysAsInt } from '../utilities/tsUtils'
 import { partialClone } from '../utilities/collectionUtils'
 import { isAmazonQ } from '../extensionUtilities'
+import { isNameMangled } from '../utilities/typeConstructors'
 
 type Callback = (...args: any[]) => any
 type CommandFactory<T extends Callback, U extends any[]> = (...parameters: U) => T
@@ -118,7 +118,7 @@ export function registerDeclaredCommands<T>(
     declarations: CommandDeclarations<T>,
     backend: T
 ): void {
-    disposables.push(...Object.values<DeclaredCommand>(declarations.declared).map(c => c.register(backend)))
+    disposables.push(...Object.values<DeclaredCommand>(declarations.declared).map((c) => c.register(backend)))
 }
 
 /**
@@ -159,11 +159,6 @@ export class Commands {
         id: string,
         ...args: Parameters<T>
     ): Promise<ReturnType<T> | undefined> {
-        const cmd = this.resources.get(id)
-        if (!cmd) {
-            getLogger().debug('command not found: "%s"', id)
-            return undefined
-        }
         return this.commands.executeCommand<ReturnType<T>>(id, ...args)?.then(undefined, (e: Error) => {
             getLogger().warn('command failed (not registered?): "%s"', id)
             return undefined
@@ -206,7 +201,7 @@ export class Commands {
             const name = !isNameMangled() ? `${target.name}.${k}` : undefined
             const mapInfo = (id: Id) => (typeof id === 'string' ? { id, name } : { name, ...id })
 
-            result[mappedKey] = id => this.declare(mapInfo(id), (instance: T) => v.bind(instance))
+            result[mappedKey] = (id) => this.declare(mapInfo(id), (instance: T) => v.bind(instance))
         }
 
         return result as unknown as Declarables<T>
@@ -320,7 +315,10 @@ class CommandResource<T extends Callback = Callback, U extends any[] = any[]> {
     private idCounter = 0
     public readonly id = this.resource.info.id
 
-    public constructor(private readonly resource: Deferred<T, U>, private readonly commands = vscode.commands) {}
+    public constructor(
+        private readonly resource: Deferred<T, U>,
+        private readonly commands = vscode.commands
+    ) {}
 
     public get registered() {
         return !!this.subscription
@@ -486,22 +484,27 @@ function getInstrumenter(
     }
 
     // Throttling occurs regardless of whether or not the instrumenter is invoked
-    const span = telemetryName ? telemetry[telemetryName] : telemetry.vscode_executeCommand
+    const span: Metric = telemetryName ? telemetry[telemetryName] : telemetry.vscode_executeCommand
     const debounceCount = info?.debounceCount !== 0 ? info?.debounceCount : undefined
     TelemetryDebounceInfo.instance.set(id, { startTime: currentTime, debounceCount: 0 })
 
     const fields = findFieldsToAddToMetric(id.args, id.compositeKey)
 
     return <T extends Callback>(fn: T, ...args: Parameters<T>) =>
-        span.run(span => {
-            ;(span as Metric<VscodeExecuteCommand>).record({
-                command: id.id,
-                debounceCount,
-                ...fields,
-            })
+        span.run(
+            (span) => {
+                ;(span as Span<VscodeExecuteCommand>).record({
+                    command: id.id,
+                    debounceCount,
+                    ...fields,
+                })
 
-            return fn(...args)
-        })
+                return fn(...args)
+            },
+            // wrap all command executions with their ID as context for telemetry.
+            // this will give us a better idea on the entrypoints of executions
+            { functionId: { name: id.id, class: 'Commands' } }
+        )
 }
 
 export const unsetSource = 'sourceImproperlySet'
@@ -515,7 +518,7 @@ function handleBadCompositeKey(data: { id: string; args: any[]; compositeKey: Co
         return // nothing to do since no key
     }
 
-    Object.entries(compositeKey).forEach(([index, field]) => {
+    for (const [index, field] of Object.entries(compositeKey)) {
         const indexAsInt = parseInt(index)
         const arg = args[indexAsInt]
         if (field === 'source' && arg === undefined) {
@@ -532,7 +535,7 @@ function handleBadCompositeKey(data: { id: string; args: any[]; compositeKey: Co
             getLogger().error('Commands/Telemetry: "%s" executed with invalid "source" type: "%O"', id, args)
             args[indexAsInt] = unsetSource
         }
-    })
+    }
 }
 
 /**
@@ -543,15 +546,15 @@ function handleBadCompositeKey(data: { id: string; args: any[]; compositeKey: Co
  */
 function findFieldsToAddToMetric(args: any[], compositeKey: CompositeKey): { [field in MetricField]?: any } {
     const indexes = keysAsInt(compositeKey)
-    const indexesWithValue = indexes.filter(i => compositeKey[i] !== undefined)
+    const indexesWithValue = indexes.filter((i) => compositeKey[i] !== undefined)
     const sortedIndexesWithValue = indexesWithValue.sort((a, b) => a - b)
 
     const result: { [field in MetricField]?: any } = {}
-    sortedIndexesWithValue.forEach(i => {
+    for (const i of sortedIndexesWithValue) {
         const fieldName: MetricField = compositeKey[i]
         const fieldValue = args[i]
         result[fieldName] = fieldValue
-    })
+    }
     return result
 }
 
@@ -609,7 +612,7 @@ export class TelemetryDebounceInfo {
         }
 
         // All the args that will be used to build the unique key
-        const uniqueArgs = uniqueIndexes.map(i => args[i])
+        const uniqueArgs = uniqueIndexes.map((i) => args[i])
 
         return uniqueArgs.length > 0 ? `${id}-${this.hashObjects(uniqueArgs)}` : id
     }
@@ -619,7 +622,7 @@ export class TelemetryDebounceInfo {
      * in the key for {@link telemetryInfo}.
      */
     private hashObjects(objects: any[]): string {
-        const hashableObjects = objects.map(obj => {
+        const hashableObjects = objects.map((obj) => {
             if (typeof obj === 'string') {
                 return obj
             }
@@ -631,7 +634,9 @@ export class TelemetryDebounceInfo {
         })
 
         const hasher = crypto.createHash('sha256')
-        hashableObjects.forEach(o => hasher.update(o))
+        for (const o of hashableObjects) {
+            hasher.update(o)
+        }
         return hasher.digest('hex')
     }
 }
@@ -648,7 +653,7 @@ async function runCommand<T extends Callback>(fn: T, info: CommandInfo<T>): Prom
 
     logger.debug(
         `command: running ${label} with arguments: %O`,
-        partialClone(args, 3, ['clientSecret', 'accessToken', 'refreshToken'], '[omitted]')
+        partialClone(args, 3, ['clientSecret', 'accessToken', 'refreshToken', 'tooltip'], { replacement: '[omitted]' })
     )
 
     try {
